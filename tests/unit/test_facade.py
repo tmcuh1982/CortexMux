@@ -30,6 +30,7 @@ from cortexmux.schemas.responses import (
     TextResponse,
     VisionResponse,
 )
+from cortexmux.web import WebPageFetcher
 
 
 class MultiProvider(BaseProvider):
@@ -174,6 +175,60 @@ async def test_all_async_convenience_methods(tmp_path: Path) -> None:
         ).engine == "pandas"
         assert (await mux.alist_models("multi"))[0].name == "model"
         assert (await mux.ahealth())[0].available
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_and_structured_extraction_include_provenance() -> None:
+    requests: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<title>Example</title><p>Revenue: 42 EUR.</p>",
+        )
+
+    config = CortexMuxConfig.model_validate(
+        {
+            "web": {
+                "enabled": True,
+                "allowed_hosts": ["93.184.216.34"],
+            }
+        }
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    fetcher = WebPageFetcher(config.web, client=client)
+    mux = CortexMux(config, register_builtin_providers=False, web_fetcher=fetcher)
+    mux.register_provider(MultiProvider())
+
+    async with mux:
+        with pytest.raises(InvalidRequestError):
+            await mux.aextract_web_page(
+                "https://93.184.216.34/source",
+                " ",
+                provider="multi",
+                model="model",
+            )
+        page = await mux.afetch_web_page("https://93.184.216.34/source")
+        assert page.text_record()["content"] == "Revenue: 42 EUR."
+        extracted = await mux.aextract_web_page(
+            "https://93.184.216.34/source",
+            "Extract the revenue.",
+            json_schema={
+                "type": "object",
+                "properties": {"value": {"type": "number"}},
+                "required": ["value"],
+            },
+            provider="multi",
+            model="model",
+        )
+
+    assert extracted.parsed == {"value": 1}
+    assert extracted.raw_metadata is not None
+    assert extracted.raw_metadata["web_source"]["final_url"] == ("https://93.184.216.34/source")
+    assert requests == ["/source", "/source"]
+    await client.aclose()
 
 
 def test_from_env_with_network_providers_disabled(tmp_path: Path) -> None:

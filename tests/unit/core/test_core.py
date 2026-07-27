@@ -17,7 +17,7 @@ from cortexmux.core.exceptions import (
 )
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
-from cortexmux.core.security import safe_output_path, validate_provider_url
+from cortexmux.core.security import safe_output_path, validate_provider_url, validate_web_url
 from cortexmux.core.types import TaskType
 from cortexmux.facade import CortexMux
 from cortexmux.schemas.requests import TextGenerationRequest
@@ -112,6 +112,19 @@ def test_configuration_precedence_and_empty_models(tmp_path: Path) -> None:
     assert config.config_path == path
 
 
+def test_web_environment_configuration() -> None:
+    config = CortexMuxConfig.load(
+        environ={
+            "CORTEXMUX_WEB_ENABLED": "true",
+            "CORTEXMUX_WEB_ALLOWED_HOSTS": "one.example, two.example",
+            "CORTEXMUX_WEB_ALLOW_PRIVATE_HOSTS": "false",
+        }
+    )
+    assert config.web.enabled
+    assert config.web.allowed_hosts == {"one.example", "two.example"}
+    assert not config.web.allow_private_hosts
+
+
 def test_network_policy_and_safe_paths(tmp_path: Path) -> None:
     assert validate_provider_url("http://127.0.0.1:11434") == "http://127.0.0.1:11434"
     assert validate_provider_url("http://[::1]:8188") == "http://[::1]:8188"
@@ -127,6 +140,20 @@ def test_network_policy_and_safe_paths(tmp_path: Path) -> None:
         safe_output_path(tmp_path, "result.txt")
     with pytest.raises(OutputPathError):
         safe_output_path(tmp_path, "../escape.txt")
+
+
+def test_web_url_policy() -> None:
+    assert (
+        validate_web_url(
+            "https://93.184.216.34/page#fragment",
+            allowed_hosts={"93.184.216.34"},
+        )
+        == "https://93.184.216.34/page"
+    )
+    with pytest.raises(RemoteHostNotAllowedError):
+        validate_web_url("http://127.0.0.1/admin")
+    with pytest.raises(RemoteHostNotAllowedError):
+        validate_web_url("https://93.184.216.34", allowed_hosts={"example.com"})
 
 
 @pytest.mark.asyncio

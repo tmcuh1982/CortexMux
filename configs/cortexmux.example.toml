@@ -43,3 +43,16 @@ max_charts = 5
 max_calculation_claims = 20
 math_absolute_tolerance = 1e-9
 math_relative_tolerance = 1e-6
+
+[web]
+# Direct page retrieval is opt-in. Prefer an explicit production allowlist.
+enabled = false
+allowed_hosts = []
+allowed_ports = [80, 443]
+allow_private_hosts = false
+timeout_seconds = 15
+max_response_bytes = 2000000
+max_text_characters = 100000
+max_redirects = 3
+max_tables = 20
+max_table_rows = 1000

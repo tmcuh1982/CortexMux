@@ -19,6 +19,7 @@ surface is tested, but production deployments should pin the patch version.
 - Safe Pandas analysis plus optional Polars and DuckDB loading.
 - Whitelisted analysis plans and bounded structured results.
 - Independent Decimal-based verification of structured AI calculation claims.
+- Opt-in bounded web-page text and table extraction with source provenance.
 - Typed Pydantic schemas, synchronous/asynchronous APIs, Typer CLI, and TOML/env config.
 - Loopback-only network policy by default.
 
@@ -101,12 +102,38 @@ print(result.math_verification_passed)
 ```
 
 `extracted_records` can be a dictionary or a list of dictionaries produced by
-a website extraction layer. CortexMux does not fetch arbitrary URLs. Without
-an interpretation model, analysis is entirely deterministic. With local
-Ollama, only a redacted bounded sample, schema, aggregates, and results are
-sent. Numerical claims are independently recalculated from structured source
-references; the model never executes code or SQL. See [data
-analysis](docs/data-analysis.md) and [security](docs/data-analysis-security.md).
+a website extraction layer. Without an interpretation model, analysis is
+entirely deterministic. With local Ollama, only a redacted bounded sample,
+schema, aggregates, and results are sent. Numerical claims are independently
+recalculated from structured source references; the model never executes code
+or SQL. See [data analysis](docs/data-analysis.md) and
+[security](docs/data-analysis-security.md).
+
+## Optional web extraction
+
+Direct page retrieval is disabled by default. Enable it for specific hosts,
+then extract visible text and simple HTML tables without giving the model
+network access:
+
+```python
+from cortexmux import CortexMux
+from cortexmux.core.config import CortexMuxConfig
+
+config = CortexMuxConfig.model_validate(
+    {"web": {"enabled": True, "allowed_hosts": ["data.example.org"]}}
+)
+
+with CortexMux(config) as mux:
+    page = mux.fetch_web_page("https://data.example.org/statistics")
+    records = page.tables[0].to_records()
+```
+
+For semantic extraction, `mux.extract_web_page(...)` sends bounded cleaned text
+to a structured-output provider such as local Ollama
+`qwen2.5-coder:7b` and preserves source metadata in the response. Initial URLs
+and redirects are revalidated; private addresses, oversized responses, URL
+credentials, unsupported ports, and non-text content are rejected. See
+[web extraction](docs/web-extraction.md).
 
 ## CLI
 
@@ -160,9 +187,10 @@ outside the machine; review the remote service's policy first. See [SECURITY](SE
 ## v0.1 limitations
 
 CortexMux is a library and CLI, not an agent platform, GUI, web server, SaaS,
-vector database, model installer, GPU manager, or distributed orchestrator.
-ComfyUI graph inputs must be explicitly bound. Model capabilities are
-configuration/introspection driven, not guessed from names.
+search engine, JavaScript browser, vector database, model installer, GPU
+manager, or distributed orchestrator. ComfyUI graph inputs must be explicitly
+bound. Model capabilities are configuration/introspection driven, not guessed
+from names.
 
 ## Development
 

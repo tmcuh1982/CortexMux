@@ -2,9 +2,9 @@
 
 Supported inputs are CSV, JSON, JSONL/NDJSON, Parquet, Excel, extracted
 `list[dict]`/`dict` records, and installed Pandas or Polars dataframes. This
-allows a website ingestion layer to pass already-extracted text and numbers
-without granting CortexMux arbitrary network access. CortexMux does not fetch
-web pages itself.
+allows the opt-in web-page retriever or an application-specific ingestion layer
+to pass already-extracted text and numbers without granting a model arbitrary
+network access. See [web extraction](web-extraction.md).
 
 Pandas is the baseline. In `auto`, Pandas handles normal inputs; installed
 DuckDB handles Parquet or files at/above the configured large-file threshold,

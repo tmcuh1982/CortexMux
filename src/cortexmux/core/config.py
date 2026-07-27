@@ -116,6 +116,30 @@ class DataConfig(BaseModel):
     auto_large_file_mb: int = Field(default=100, gt=0)
 
 
+class WebConfig(BaseModel):
+    """Opt-in, bounded web-page retrieval settings."""
+
+    enabled: bool = False
+    allowed_hosts: set[str] = Field(default_factory=set)
+    allowed_ports: set[int] = Field(default_factory=lambda: {80, 443})
+    allow_private_hosts: bool = False
+    timeout_seconds: float = Field(default=15, gt=0, le=120)
+    max_response_bytes: int = Field(default=2_000_000, gt=0, le=20_000_000)
+    max_text_characters: int = Field(default=100_000, gt=0, le=1_000_000)
+    max_redirects: int = Field(default=3, ge=0, le=10)
+    max_tables: int = Field(default=20, ge=0, le=100)
+    max_table_rows: int = Field(default=1_000, ge=0, le=10_000)
+    user_agent: str = Field(default="CortexMux-web-extraction/1", min_length=1)
+
+    @field_validator("allowed_hosts", mode="before")
+    @classmethod
+    def normalize_allowed_hosts(cls, value: object) -> object:
+        """Accept comma-separated hosts and normalize surrounding whitespace."""
+        if isinstance(value, str):
+            return {item.strip() for item in value.split(",") if item.strip()}
+        return value
+
+
 class CortexMuxConfig(BaseModel):
     """Complete CortexMux configuration."""
 
@@ -123,6 +147,7 @@ class CortexMuxConfig(BaseModel):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     data: DataConfig = Field(default_factory=DataConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
     config_path: Path | None = Field(default=None, exclude=True)
 
     def model_for(self, task: TaskType, provider: str) -> str | None:
@@ -195,13 +220,20 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
             "comfyui",
             "default_workflow",
         ),
+        "CORTEXMUX_WEB_ENABLED": ("web", "enabled"),
+        "CORTEXMUX_WEB_ALLOWED_HOSTS": ("web", "allowed_hosts"),
+        "CORTEXMUX_WEB_ALLOW_PRIVATE_HOSTS": ("web", "allow_private_hosts"),
     }
     result: dict[str, Any] = {}
     for variable, path in mapping.items():
         if variable not in env:
             continue
         value: Any = env[variable]
-        if variable == "CORTEXMUX_ALLOW_REMOTE_HOSTS":
+        if variable in {
+            "CORTEXMUX_ALLOW_REMOTE_HOSTS",
+            "CORTEXMUX_WEB_ENABLED",
+            "CORTEXMUX_WEB_ALLOW_PRIVATE_HOSTS",
+        }:
             value = value.lower() in {"1", "true", "yes", "on"}
         cursor = result
         for part in path[:-1]:

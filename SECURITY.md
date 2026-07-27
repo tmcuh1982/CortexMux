@@ -16,3 +16,11 @@ patterns, and prompts/results are capped.
 Files are resolved, format- and size-checked, outputs are constrained beneath
 their root, and existing files are not overwritten.
 
+Optional web-page retrieval is disabled by default and has an independent
+policy from provider endpoints. Initial URLs and redirects are checked against
+an optional exact host allowlist, allowed ports, and resolved public IP
+addresses. URL credentials, private/non-public targets, oversized responses,
+and non-text content are rejected. Models receive bounded cleaned content, not
+network access. For hostile multi-tenant deployments, also enforce outbound
+network restrictions because DNS validation and connection establishment are
+separate operating-system operations.

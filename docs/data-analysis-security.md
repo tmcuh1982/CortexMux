@@ -20,7 +20,10 @@ If any declared claim fails, the model text is withheld from the trusted
 `interpretation` field. Sensitive columns are removed not only from samples but
 also from deterministic result rows before those rows are sent to a model.
 
-Website retrieval and HTML parsing are deliberately outside this module.
-Applications should enforce their own URL allowlist and pass only extracted
-records to CortexMux, avoiding server-side request forgery and accidental
-transmission of full pages.
+Website retrieval remains separate from the model and deterministic analysis
+engines. The optional fetcher is disabled by default, validates every URL and
+redirect, rejects non-public resolved addresses, supports exact host
+allowlists, and bounds response bytes and extracted content. Only cleaned text
+or table records enter the analysis/model pipeline. Applications exposed to
+untrusted users should additionally enforce network-level egress rules. See
+[web extraction](web-extraction.md).

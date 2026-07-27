@@ -6,6 +6,12 @@ All notable changes follow Keep a Changelog conventions.
 
 ### Added
 
+- Opt-in bounded web-page retrieval with public-address and host-allowlist
+  validation, redirect revalidation, visible-text/table parsing, and
+  source-attributed structured extraction through a configured model.
+- Deterministic synthetic CSV fixtures for revenue, population, weather, and
+  stock-price regression scenarios, including independently verified SMA50 and
+  SMA200 values.
 - End-to-end local demo with generated CSV data, provider model discovery,
   Ollama `qwen2.5-coder` analysis, and a generic ComfyUI workflow.
 - Reusable ComfyUI workflow catalogs discovered from versioned local manifests,

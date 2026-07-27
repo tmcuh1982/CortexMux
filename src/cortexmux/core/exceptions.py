@@ -76,6 +76,14 @@ class DataAnalysisError(CortexMuxError):
     """A deterministic data operation failed."""
 
 
+class WebFetchError(CortexMuxError):
+    """A web page could not be retrieved or decoded safely."""
+
+
+class WebAccessDisabledError(WebFetchError):
+    """Web access was requested without being explicitly enabled."""
+
+
 class OptionalDependencyError(CortexMuxError):
     """A requested feature needs an optional dependency."""
 
