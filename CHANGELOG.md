@@ -4,6 +4,8 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-27
+
 ### Added
 
 - Opt-in bounded web-page retrieval with public-address and host-allowlist
