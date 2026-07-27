@@ -20,7 +20,9 @@ embedding = ""
 enabled = true
 base_url = "http://127.0.0.1:8188"
 timeout_seconds = 600
+# Contains API graphs and reusable *.cortexmux.json catalog manifests.
 workflow_dir = "./workflows"
+# May be a catalog name such as "text-to-image" or a direct graph path.
 default_workflow = ""
 model_folders = ["checkpoints"]
 
@@ -38,4 +40,6 @@ max_sample_rows = 50
 max_result_rows = 200
 max_plan_steps = 20
 max_charts = 5
-
+max_calculation_claims = 20
+math_absolute_tolerance = 1e-9
+math_relative_tolerance = 1e-6

@@ -12,3 +12,8 @@ Supported environment variables include `CORTEXMUX_OLLAMA_BASE_URL`,
 Provider headers are secret values. Do not commit credentials. Remote hosts
 must be explicitly allowed and are never used as a silent fallback.
 
+Mathematical verification is configured under `[data]` with
+`max_calculation_claims`, `math_absolute_tolerance`, and
+`math_relative_tolerance`. Tolerances must be non-negative decimals. Request
+fields decide whether verification is enabled and whether every calculation
+must pass.

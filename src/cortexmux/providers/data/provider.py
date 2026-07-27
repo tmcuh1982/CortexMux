@@ -23,7 +23,9 @@ from cortexmux.providers.data.engines.base import BaseDataEngine
 from cortexmux.providers.data.engines.duckdb_engine import DuckDBEngine
 from cortexmux.providers.data.engines.pandas_engine import PandasEngine
 from cortexmux.providers.data.engines.polars_engine import PolarsEngine
+from cortexmux.providers.data.math_verification import MathVerifier
 from cortexmux.providers.data.planner import (
+    asks_for_calculation,
     baseline_plan,
     interpretation_prompt,
     planning_prompt,
@@ -31,6 +33,12 @@ from cortexmux.providers.data.planner import (
 from cortexmux.providers.data.reporting import markdown_report
 from cortexmux.providers.data.schemas import AnalysisPlan
 from cortexmux.providers.data.visualization import create_baseline_charts
+from cortexmux.schemas.calculations import (
+    CalculationClaim,
+    CalculationVerification,
+    InterpretationWithCalculations,
+    VerificationStatus,
+)
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
 from cortexmux.schemas.requests import (
     ChatRequest,
@@ -118,7 +126,23 @@ class DataAnalysisProvider(BaseProvider):
             plan.bounded(self.config.max_plan_steps)
         except ValueError as exc:
             raise DataAnalysisError(str(exc), request_id=request.request_id) from exc
-        results = engine.execute(frame, plan, max_result_rows=self.config.max_result_rows)
+        try:
+            results = engine.execute(frame, plan, max_result_rows=self.config.max_result_rows)
+        except DataAnalysisError:
+            can_fallback = (
+                request.plan is None
+                and request.interpretation_provider is not None
+                and request.interpretation_model is not None
+                and not request.strict_planning
+            )
+            if not can_fallback:
+                raise
+            warnings.append(
+                "The LLM plan referenced invalid data or operations; "
+                "the deterministic baseline plan was used."
+            )
+            plan = baseline_plan()
+            results = engine.execute(frame, plan, max_result_rows=self.config.max_result_rows)
         chart_paths = (
             create_baseline_charts(
                 frame,
@@ -129,7 +153,19 @@ class DataAnalysisProvider(BaseProvider):
             if request.create_charts
             else []
         )
-        interpretation, character_count = await self._interpret(request, profile, results, warnings)
+        model_results = _redact_results(results, set(profile.redacted_columns))
+        interpretation, calculation_claims, character_count = await self._interpret(
+            request, profile, model_results, warnings
+        )
+        verifications, math_verification_passed = self._verify_calculations(
+            request,
+            profile=profile,
+            results=model_results,
+            claims=calculation_claims,
+            warnings=warnings,
+        )
+        accepted_interpretation = interpretation if math_verification_passed is not False else None
+        unverified_interpretation = interpretation if math_verification_passed is False else None
         disclosure = {
             "schema_columns": [
                 column for column in profile.schema_info if column not in profile.redacted_columns
@@ -138,13 +174,14 @@ class DataAnalysisProvider(BaseProvider):
             "aggregate_items": len(results),
             "redacted_columns": profile.redacted_columns,
             "character_count": character_count,
+            "calculation_claims": len(calculation_claims),
         }
         report = markdown_report(
             profile,
             plan,
             engine=engine.name,
             warnings=warnings,
-            interpretation=interpretation,
+            interpretation=accepted_interpretation,
         )
         return DataAnalysisResponse(
             provider=self.name,
@@ -157,7 +194,10 @@ class DataAnalysisProvider(BaseProvider):
             warnings=warnings,
             plan=plan.model_dump(mode="json"),
             chart_paths=chart_paths,
-            interpretation=interpretation,
+            interpretation=accepted_interpretation,
+            unverified_interpretation=unverified_interpretation,
+            calculation_verifications=verifications,
+            math_verification_passed=math_verification_passed,
             disclosure=disclosure,
         )
 
@@ -234,18 +274,45 @@ class DataAnalysisProvider(BaseProvider):
         profile: Any,
         results: list[dict[str, Any]],
         warnings: list[str],
-    ) -> tuple[str | None, int]:
+    ) -> tuple[str | None, list[CalculationClaim], int]:
         if not request.interpretation_provider or not request.interpretation_model:
-            return None, 0
+            return None, [], 0
         if self.request_executor is None:
             warnings.append("LLM interpretation was requested but no executor is configured.")
-            return None, 0
+            return None, [], 0
         prompt, character_count = interpretation_prompt(
             request.instruction,
             profile,
             results,
             maximum_characters=self.config.max_prompt_characters,
+            verify_calculations=request.verify_calculations,
         )
+        if request.verify_calculations:
+            try:
+                response = await self.request_executor(
+                    StructuredOutputRequest(
+                        provider=request.interpretation_provider,
+                        model=request.interpretation_model,
+                        prompt=prompt,
+                        json_schema=InterpretationWithCalculations.model_json_schema(),
+                    )
+                )
+                if not isinstance(response, StructuredResponse):
+                    raise DataAnalysisError(
+                        "Interpretation provider returned an unexpected response."
+                    )
+                parsed = InterpretationWithCalculations.model_validate(response.parsed)
+            except (CortexMuxError, ValidationError, ValueError) as exc:
+                if request.require_verified_calculations:
+                    raise DataAnalysisError(
+                        "Structured AI interpretation failed in strict verification mode."
+                    ) from exc
+                warnings.append(
+                    "Structured AI interpretation failed; no unverified mathematical "
+                    "answer was accepted."
+                )
+                return None, [], character_count
+            return parsed.content, parsed.calculations, character_count
         response = await self.request_executor(
             ChatRequest(
                 provider=request.interpretation_provider,
@@ -255,8 +322,73 @@ class DataAnalysisProvider(BaseProvider):
         )
         if not isinstance(response, ChatResponse):
             raise DataAnalysisError("Interpretation provider returned an unexpected response.")
-        return response.content, character_count
+        return response.content, [], character_count
+
+    def _verify_calculations(
+        self,
+        request: DataAnalysisRequest,
+        *,
+        profile: Any,
+        results: list[dict[str, Any]],
+        claims: list[CalculationClaim],
+        warnings: list[str],
+    ) -> tuple[list[CalculationVerification], bool | None]:
+        if not request.verify_calculations:
+            return [], None
+        if len(claims) > self.config.max_calculation_claims:
+            raise DataAnalysisError(
+                "AI returned too many calculation claims.",
+                count=len(claims),
+                maximum=self.config.max_calculation_claims,
+            )
+        verifier = MathVerifier(
+            absolute_tolerance=self.config.math_absolute_tolerance,
+            relative_tolerance=self.config.math_relative_tolerance,
+        )
+        context = {
+            "profile": profile.model_dump(by_alias=True, exclude={"sample"}),
+            "results": results,
+        }
+        verifications = [verifier.verify(claim, context) for claim in claims]
+        requested = asks_for_calculation(request.instruction)
+        passed: bool | None
+        if verifications:
+            passed = all(result.status is VerificationStatus.VERIFIED for result in verifications)
+        elif requested:
+            passed = False
+            warnings.append(
+                "A mathematical result was requested, but the AI returned no auditable "
+                "calculation claim."
+            )
+        else:
+            passed = None
+        if passed is False and verifications:
+            invalid = sum(
+                result.status is not VerificationStatus.VERIFIED for result in verifications
+            )
+            warnings.append(
+                f"{invalid} AI calculation claim(s) failed deterministic verification; "
+                "the interpretation was withheld."
+            )
+        if request.require_verified_calculations and passed is not True:
+            raise DataAnalysisError(
+                "Strict mathematical verification failed.",
+                request_id=request.request_id,
+            )
+        return verifications, passed
 
 
 def _installed(package: str) -> bool:
     return importlib.util.find_spec(package) is not None
+
+
+def _redact_results(value: Any, redacted_columns: set[str]) -> Any:
+    if isinstance(value, list):
+        return [_redact_results(item, redacted_columns) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _redact_results(item, redacted_columns)
+            for key, item in value.items()
+            if str(key) not in redacted_columns
+        }
+    return value

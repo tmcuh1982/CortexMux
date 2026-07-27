@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,9 +11,12 @@ import httpx
 import pytest
 
 from cortexmux.core.exceptions import ProviderResponseError, WorkflowValidationError
+from cortexmux.core.types import ProgressStage
+from cortexmux.providers.comfyui.catalog import WorkflowCatalog
 from cortexmux.providers.comfyui.client import ComfyUIClient
 from cortexmux.providers.comfyui.provider import ComfyUIProvider
 from cortexmux.providers.comfyui.workflow import InputBinding, WorkflowDefinition
+from cortexmux.schemas.progress import ProgressCallback, ProgressEvent, emit_progress
 from cortexmux.schemas.requests import ImageGenerationRequest
 
 
@@ -71,7 +75,22 @@ class FakeComfyClient:
         client_id: str,
         request_id: str,
         timeout: float,
+        on_progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
+        await emit_progress(
+            on_progress,
+            ProgressEvent(
+                request_id=request_id,
+                provider="comfyui",
+                stage=ProgressStage.NODE_PROGRESS,
+                prompt_id=prompt_id,
+                client_id=client_id,
+                node_id="3",
+                current=1,
+                total=2,
+                progress=0.5,
+            ),
+        )
         return {
             "outputs": {
                 "9": {
@@ -116,6 +135,161 @@ async def test_provider_submission_and_safe_download(
     assert Path(artifact.path).read_bytes() == b"png"
     await provider.close()
     assert client.closed
+
+
+@pytest.mark.asyncio
+async def test_provider_reports_typed_progress(tmp_path: Path, api_graph: dict[str, Any]) -> None:
+    client = FakeComfyClient()
+    provider = ComfyUIProvider(
+        client,  # type: ignore[arg-type]
+        workflow_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        model_folders=[],
+        timeout=5,
+    )
+    events: list[ProgressEvent] = []
+    await provider.execute_with_progress(
+        ImageGenerationRequest(
+            prompt="new",
+            workflow=api_graph,
+            bindings={"prompt": {"node_id": "6", "input": "text"}},
+            expected_output_nodes=["9"],
+        ),
+        events.append,
+    )
+    assert [event.stage for event in events] == [
+        ProgressStage.SUBMITTING,
+        ProgressStage.QUEUED,
+        ProgressStage.NODE_PROGRESS,
+        ProgressStage.DOWNLOADING,
+        ProgressStage.COMPLETED,
+    ]
+    assert events[2].progress == 0.5
+    assert events[-1].prompt_id == "prompt-1"
+
+
+def test_normalize_comfyui_progress_events() -> None:
+    event = ComfyUIClient.normalize_progress_event(
+        {
+            "type": "progress",
+            "data": {"prompt_id": "p", "node": "3", "value": 4, "max": 10},
+        },
+        request_id="r",
+        prompt_id="p",
+        client_id="c",
+    )
+    assert event is not None
+    assert event.stage is ProgressStage.NODE_PROGRESS
+    assert event.node_id == "3"
+    assert event.progress == 0.4
+    status = ComfyUIClient.normalize_progress_event(
+        {
+            "type": "status",
+            "data": {"status": {"exec_info": {"queue_remaining": 2}}},
+        },
+        request_id="r",
+        prompt_id="p",
+        client_id="c",
+    )
+    assert status is not None and status.queue_remaining == 2
+    assert (
+        ComfyUIClient.normalize_progress_event(
+            {"type": "unknown", "data": {}},
+            request_id="r",
+            prompt_id="p",
+            client_id="c",
+        )
+        is None
+    )
+
+
+def test_workflow_catalog_loads_named_manifest(tmp_path: Path, api_graph: dict[str, Any]) -> None:
+    workflow = tmp_path / "graph.json"
+    workflow.write_text(json.dumps(api_graph), encoding="utf-8")
+    bindings = tmp_path / "bindings.json"
+    bindings.write_text(
+        json.dumps({"prompt": {"node_id": "6", "input": "text"}}),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "text-to-image.cortexmux.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "text-to-image",
+                "description": "Reusable test workflow",
+                "workflow": "graph.json",
+                "bindings": "bindings.json",
+                "expected_output_nodes": ["9"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    catalog = WorkflowCatalog(tmp_path)
+    assert catalog.list()[0].binding_fields == ["prompt"]
+    definition = catalog.get("text-to-image")
+    bound, ignored = definition.bind({"prompt": "catalog prompt"})
+    assert bound["6"]["inputs"]["text"] == "catalog prompt"
+    assert ignored == []
+
+
+@pytest.mark.asyncio
+async def test_provider_executes_catalog_workflow_by_name(
+    tmp_path: Path, api_graph: dict[str, Any]
+) -> None:
+    (tmp_path / "graph.json").write_text(json.dumps(api_graph), encoding="utf-8")
+    (tmp_path / "catalog.cortexmux.json").write_text(
+        json.dumps(
+            {
+                "name": "catalog-image",
+                "workflow": "graph.json",
+                "bindings": {"prompt": {"node_id": "6", "input": "text"}},
+                "expected_output_nodes": ["9"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = FakeComfyClient()
+    provider = ComfyUIProvider(
+        client,  # type: ignore[arg-type]
+        workflow_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        model_folders=[],
+        timeout=5,
+    )
+    response = await provider.execute(
+        ImageGenerationRequest(prompt="from catalog", workflow="catalog-image")
+    )
+    assert response.raw_metadata == {"workflow": "catalog-image"}
+    assert client.graph is not None
+    assert client.graph["6"]["inputs"]["text"] == "from catalog"
+
+
+def test_workflow_catalog_rejects_escape_and_duplicates(
+    tmp_path: Path, api_graph: dict[str, Any]
+) -> None:
+    outside = tmp_path.parent / "outside-workflow.json"
+    outside.write_text(json.dumps(api_graph), encoding="utf-8")
+    (tmp_path / "escape.cortexmux.json").write_text(
+        json.dumps({"name": "escape", "workflow": "../outside-workflow.json"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(WorkflowValidationError):
+        WorkflowCatalog(tmp_path)
+
+    (tmp_path / "escape.cortexmux.json").unlink()
+    workflow = tmp_path / "graph.json"
+    workflow.write_text(json.dumps(api_graph), encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    for parent in (tmp_path, nested):
+        (parent / f"{parent.name}.cortexmux.json").write_text(
+            json.dumps({"name": "duplicate", "workflow": str(workflow)}),
+            encoding="utf-8",
+        )
+    with pytest.raises(WorkflowValidationError):
+        WorkflowCatalog(tmp_path)
 
 
 @pytest.mark.asyncio

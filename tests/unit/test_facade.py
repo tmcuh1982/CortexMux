@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from cortexmux import CortexMux
 from cortexmux.core.capabilities import ProviderCapability
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import InvalidRequestError
-from cortexmux.core.types import TaskType
+from cortexmux.core.types import ProgressStage, TaskType
 from cortexmux.providers.base import BaseProvider
+from cortexmux.providers.ollama import OllamaClient, OllamaProvider
+from cortexmux.schemas.calculations import VerificationStatus
 from cortexmux.schemas.common import HealthStatus, ImageArtifact, ModelInfo
+from cortexmux.schemas.progress import ProgressCallback, ProgressEvent, emit_progress
 from cortexmux.schemas.requests import CortexRequest
 from cortexmux.schemas.responses import (
     ChatResponse,
@@ -86,6 +91,22 @@ class MultiProvider(BaseProvider):
             report_markdown="# Report\n",
         )
 
+    async def execute_with_progress(
+        self,
+        request: CortexRequest,
+        on_progress: ProgressCallback,
+    ) -> CortexResponse:
+        await emit_progress(
+            on_progress,
+            ProgressEvent(
+                request_id=request.request_id,
+                provider=self.name,
+                stage=ProgressStage.COMPLETED,
+                progress=1,
+            ),
+        )
+        return await self.execute(request)
+
 
 def configured_mux() -> CortexMux:
     """Return a facade containing only the multi-task test provider."""
@@ -101,6 +122,20 @@ def test_sync_facade_and_generic_validation() -> None:
         assert mux.health()[0].available
         with pytest.raises(InvalidRequestError):
             mux.run("unknown", prompt="x")
+        verification = mux.verify_calculation(
+            {
+                "label": "Total",
+                "operation": "sum",
+                "operands": [
+                    {"source_path": "/results/0/value"},
+                    {"literal": 2},
+                ],
+                "claimed_result": 5,
+            },
+            {"profile": {}, "results": [{"value": 3}]},
+        )
+        assert verification.status is VerificationStatus.VERIFIED
+        assert verification.expected_result == Decimal("5")
 
 
 @pytest.mark.asyncio
@@ -120,14 +155,17 @@ async def test_all_async_convenience_methods(tmp_path: Path) -> None:
             await mux.avision(b"image", prompt="x", provider="multi", model="model")
         ).content == "vision"
         assert (await mux.aembed(["x"], provider="multi", model="model")).embeddings == [[1.0]]
+        progress: list[ProgressEvent] = []
         assert (
             await mux.agenerate_image(
                 "x",
                 provider="multi",
                 model="model",
                 workflow={"1": {"class_type": "X", "inputs": {}}},
+                on_progress=progress.append,
             )
         ).prompt_id == "p"
+        assert progress[0].stage is ProgressStage.COMPLETED
         assert (
             await mux.aanalyze_data(
                 tmp_path / "unused.csv",
@@ -156,3 +194,22 @@ def test_builtin_provider_construction_and_cleanup(tmp_path: Path) -> None:
             "data",
             "ollama",
         ]
+
+
+def test_sync_network_calls_share_one_event_loop() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "test"})
+        return httpx.Response(200, json={"models": [{"name": "qwen2.5-coder:7b"}]})
+
+    client = httpx.AsyncClient(
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+    mux = CortexMux(CortexMuxConfig(), register_builtin_providers=False)
+    mux.register_provider(
+        OllamaProvider(OllamaClient("http://localhost:11434", timeout=2, client=client))
+    )
+    with mux:
+        assert mux.health()[0].available
+        assert mux.list_models("ollama")[0].name == "qwen2.5-coder:7b"

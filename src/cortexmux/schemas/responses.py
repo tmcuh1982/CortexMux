@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from cortexmux.core.types import TaskType
+from cortexmux.schemas.calculations import CalculationVerification
 from cortexmux.schemas.common import ImageArtifact, RoutingMetadata, UsageMetadata
 
 
@@ -79,6 +80,9 @@ class DataAnalysisResponse(CortexResponse):
     plan: dict[str, Any] | None = None
     chart_paths: list[str] = Field(default_factory=list)
     interpretation: str | None = None
+    unverified_interpretation: str | None = None
+    calculation_verifications: list[CalculationVerification] = Field(default_factory=list)
+    math_verification_passed: bool | None = None
     disclosure: dict[str, Any] = Field(default_factory=dict)
 
 

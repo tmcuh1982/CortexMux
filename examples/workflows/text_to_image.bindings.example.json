@@ -1,0 +1,42 @@
+{
+  "prompt": {
+    "node_id": "6",
+    "input": "text"
+  },
+  "negative_prompt": {
+    "node_id": "7",
+    "input": "text"
+  },
+  "seed": {
+    "node_id": "3",
+    "input": "seed"
+  },
+  "width": {
+    "node_id": "5",
+    "input": "width"
+  },
+  "height": {
+    "node_id": "5",
+    "input": "height"
+  },
+  "checkpoint": {
+    "node_id": "4",
+    "input": "ckpt_name"
+  },
+  "steps": {
+    "node_id": "3",
+    "input": "steps"
+  },
+  "guidance": {
+    "node_id": "3",
+    "input": "cfg"
+  },
+  "sampler": {
+    "node_id": "3",
+    "input": "sampler_name"
+  },
+  "scheduler": {
+    "node_id": "3",
+    "input": "scheduler"
+  }
+}

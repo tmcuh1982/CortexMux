@@ -7,8 +7,9 @@ are never treated as proof that a model supports vision or structured output.
 
 Ollama uses `/api/version`, `/api/tags`, `/api/generate`, `/api/chat`, and
 `/api/embed`. ComfyUI uses `/system_stats`, `/models/{folder}`, `/prompt`,
-`/history/{prompt_id}`, `/view`, and optional `/ws`.
+`/history/{prompt_id}`, `/view`, and optional `/ws`. Its provider exposes
+reusable workflow catalogs and normalized progress callbacks without adding
+ComfyUI-specific behavior to the router.
 
 Custom providers subclass `BaseProvider` and can be registered through
 `mux.register_provider(provider)`.
-

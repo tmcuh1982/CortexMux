@@ -1,5 +1,13 @@
 """Public schema exports."""
 
+from cortexmux.schemas.calculations import (
+    CalculationClaim,
+    CalculationOperand,
+    CalculationVerification,
+    InterpretationWithCalculations,
+    MathOperation,
+    VerificationStatus,
+)
 from cortexmux.schemas.common import (
     ChatMessage,
     HealthStatus,
@@ -8,6 +16,7 @@ from cortexmux.schemas.common import (
     RoutingMetadata,
     UsageMetadata,
 )
+from cortexmux.schemas.progress import ProgressCallback, ProgressEvent
 from cortexmux.schemas.requests import (
     ChatRequest,
     CortexRequest,
@@ -31,6 +40,9 @@ from cortexmux.schemas.responses import (
 )
 
 __all__ = [
+    "CalculationClaim",
+    "CalculationOperand",
+    "CalculationVerification",
     "ChatMessage",
     "ChatRequest",
     "ChatResponse",
@@ -44,7 +56,11 @@ __all__ = [
     "ImageArtifact",
     "ImageGenerationRequest",
     "ImageGenerationResponse",
+    "InterpretationWithCalculations",
+    "MathOperation",
     "ModelInfo",
+    "ProgressCallback",
+    "ProgressEvent",
     "RoutingMetadata",
     "StreamChunk",
     "StructuredOutputRequest",
@@ -52,6 +68,7 @@ __all__ = [
     "TextGenerationRequest",
     "TextResponse",
     "UsageMetadata",
+    "VerificationStatus",
     "VisionRequest",
     "VisionResponse",
 ]

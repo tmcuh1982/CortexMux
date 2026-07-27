@@ -186,10 +186,39 @@ def test_image_data_and_workflow_commands(fake_mux: None, tmp_path: Path) -> Non
     assert image.exit_code == 0
     source = tmp_path / "data.csv"
     source.write_text("a\n1\n", encoding="utf-8")
-    data = runner.invoke(app, ["data", "analyze", str(source)])
-    assert data.exit_code == 0 and "Report" in data.stdout
+    data = runner.invoke(
+        app,
+        ["data", "analyze", str(source), "--require-verified-calculations"],
+    )
+    assert data.exit_code == 0
     valid = runner.invoke(
         app,
         ["workflows", "validate", str(workflow), "--bindings", str(bindings)],
     )
     assert valid.exit_code == 0 and "Valid" in valid.stdout
+
+
+def test_workflow_catalog_list_command(tmp_path: Path) -> None:
+    workflow = tmp_path / "graph.json"
+    workflow.write_text(
+        '{"6":{"class_type":"Text","inputs":{"text":"old"}}}',
+        encoding="utf-8",
+    )
+    (tmp_path / "demo.cortexmux.json").write_text(
+        '{"name":"demo","description":"CLI test","workflow":"graph.json",'
+        '"bindings":{"prompt":{"node_id":"6","input":"text"}}}',
+        encoding="utf-8",
+    )
+    config = tmp_path / "config.toml"
+    config.write_text(
+        f'[providers.ollama]\nenabled=false\n[providers.comfyui]\nworkflow_dir="{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        ["workflows", "list", "--json"],
+        env={"CORTEXMUX_CONFIG": str(config)},
+    )
+    assert result.exit_code == 0
+    assert '"name": "demo"' in result.stdout
+    assert '"binding_fields": [' in result.stdout

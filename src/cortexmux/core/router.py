@@ -10,6 +10,7 @@ from cortexmux.core.exceptions import ModelSelectionError, UnsupportedTaskError
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.providers.base import BaseProvider
 from cortexmux.schemas.common import RoutingMetadata
+from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import CortexRequest
 from cortexmux.schemas.responses import CortexResponse
 
@@ -73,13 +74,21 @@ class Router:
             request_id=request.request_id,
         )
 
-    async def route(self, request: CortexRequest) -> CortexResponse:
+    async def route(
+        self,
+        request: CortexRequest,
+        *,
+        on_progress: ProgressCallback | None = None,
+    ) -> CortexResponse:
         """Select and execute a request, adding complete routing metadata."""
         started_at = datetime.now(UTC)
         started_clock = perf_counter()
         provider, model, reason = self.select(request)
         selected_request = request.model_copy(update={"provider": provider.name, "model": model})
-        response = await provider.execute(selected_request)
+        if on_progress is None:
+            response = await provider.execute(selected_request)
+        else:
+            response = await provider.execute_with_progress(selected_request, on_progress)
         finished_at = datetime.now(UTC)
         response.routing = RoutingMetadata(
             requested_provider=request.provider,

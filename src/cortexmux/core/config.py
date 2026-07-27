@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,9 @@ class DataConfig(BaseModel):
     max_plan_steps: int = Field(default=20, gt=0, le=100)
     max_charts: int = Field(default=5, ge=0, le=20)
     max_prompt_characters: int = Field(default=20_000, gt=0)
+    max_calculation_claims: int = Field(default=20, gt=0, le=100)
+    math_absolute_tolerance: Decimal = Field(default=Decimal("1e-9"), ge=0)
+    math_relative_tolerance: Decimal = Field(default=Decimal("1e-6"), ge=0)
     sensitive_column_patterns: list[str] = Field(
         default_factory=lambda: ["password", "token", "secret", "api_key", "private_key"]
     )

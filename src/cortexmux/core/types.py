@@ -22,3 +22,20 @@ class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
     TOOL = "tool"
+
+
+class ProgressStage(StrEnum):
+    """Normalized stages emitted while a provider executes work."""
+
+    SUBMITTING = "submitting"
+    QUEUED = "queued"
+    STATUS = "status"
+    EXECUTION_STARTED = "execution_started"
+    NODE_STARTED = "node_started"
+    NODE_PROGRESS = "node_progress"
+    NODE_COMPLETED = "node_completed"
+    EXECUTION_CACHED = "execution_cached"
+    EXECUTION_COMPLETED = "execution_completed"
+    DOWNLOADING = "downloading"
+    COMPLETED = "completed"
+    ERROR = "error"

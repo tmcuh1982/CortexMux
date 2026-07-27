@@ -15,11 +15,13 @@ from cortexmux.core.exceptions import (
     WorkflowValidationError,
 )
 from cortexmux.core.security import safe_output_path
-from cortexmux.core.types import TaskType
+from cortexmux.core.types import ProgressStage, TaskType
 from cortexmux.providers.base import BaseProvider
+from cortexmux.providers.comfyui.catalog import WorkflowCatalog, WorkflowCatalogItem
 from cortexmux.providers.comfyui.client import ComfyUIClient
 from cortexmux.providers.comfyui.workflow import InputBinding, WorkflowDefinition
 from cortexmux.schemas.common import HealthStatus, ImageArtifact, ModelInfo
+from cortexmux.schemas.progress import ProgressCallback, ProgressEvent, emit_progress
 from cortexmux.schemas.requests import CortexRequest, ImageGenerationRequest
 from cortexmux.schemas.responses import CortexResponse, ImageGenerationResponse
 
@@ -43,6 +45,7 @@ class ComfyUIProvider(BaseProvider):
         self.output_dir = output_dir
         self.model_folders = model_folders
         self.timeout = timeout
+        self.catalog = WorkflowCatalog(workflow_dir)
 
     async def healthcheck(self) -> HealthStatus:
         """Check ComfyUI system stats without raising for normal downtime."""
@@ -99,6 +102,22 @@ class ComfyUIProvider(BaseProvider):
 
     async def execute(self, request: CortexRequest) -> CortexResponse:
         """Bind, submit, wait for, and download a ComfyUI workflow."""
+        return await self._execute(request, on_progress=None)
+
+    async def execute_with_progress(
+        self,
+        request: CortexRequest,
+        on_progress: ProgressCallback,
+    ) -> CortexResponse:
+        """Execute a workflow while reporting normalized queue and node progress."""
+        return await self._execute(request, on_progress=on_progress)
+
+    async def _execute(
+        self,
+        request: CortexRequest,
+        *,
+        on_progress: ProgressCallback | None,
+    ) -> CortexResponse:
         if not isinstance(request, ImageGenerationRequest):
             raise UnsupportedTaskError("ComfyUI supports only image generation.")
         definition = self._definition(request)
@@ -117,30 +136,106 @@ class ComfyUIProvider(BaseProvider):
         }
         graph, ignored = definition.bind(values, strict=request.strict_bindings)
         client_id = str(uuid4())
+        await emit_progress(
+            on_progress,
+            ProgressEvent(
+                request_id=request.request_id,
+                provider=self.name,
+                stage=ProgressStage.SUBMITTING,
+                message=f"Submitting workflow '{definition.name}' to ComfyUI.",
+                client_id=client_id,
+            ),
+        )
         prompt_id = await self.client.submit(
             graph, client_id=client_id, request_id=request.request_id
+        )
+        await emit_progress(
+            on_progress,
+            ProgressEvent(
+                request_id=request.request_id,
+                provider=self.name,
+                stage=ProgressStage.QUEUED,
+                message="ComfyUI accepted the workflow.",
+                prompt_id=prompt_id,
+                client_id=client_id,
+            ),
         )
         history = await self.client.wait_for_completion(
             prompt_id,
             client_id=client_id,
             request_id=request.request_id,
             timeout=request.timeout or self.timeout,
+            on_progress=on_progress,
+        )
+        await emit_progress(
+            on_progress,
+            ProgressEvent(
+                request_id=request.request_id,
+                provider=self.name,
+                stage=ProgressStage.DOWNLOADING,
+                message="Downloading generated images from ComfyUI.",
+                prompt_id=prompt_id,
+                client_id=client_id,
+            ),
         )
         images = await self._download_outputs(request, history)
+        await emit_progress(
+            on_progress,
+            ProgressEvent(
+                request_id=request.request_id,
+                provider=self.name,
+                stage=ProgressStage.COMPLETED,
+                message=f"Downloaded {len(images)} generated image(s).",
+                prompt_id=prompt_id,
+                client_id=client_id,
+                current=len(images),
+                total=len(images),
+                progress=1,
+            ),
+        )
+        metadata: dict[str, Any] = {"workflow": definition.name}
+        if ignored:
+            metadata["ignored_bindings"] = ignored
         return ImageGenerationResponse(
             provider=self.name,
             model=request.model or request.checkpoint,
             request_id=request.request_id,
             images=images,
             prompt_id=prompt_id,
-            raw_metadata={"ignored_bindings": ignored} if ignored else None,
+            raw_metadata=metadata,
         )
 
+    def list_workflows(self, *, refresh: bool = True) -> list[WorkflowCatalogItem]:
+        """List reusable workflows discovered in the configured catalog."""
+        return self.catalog.refresh() if refresh else self.catalog.list()
+
+    def get_workflow(self, name: str) -> WorkflowDefinition:
+        """Return one reusable workflow definition by catalog name."""
+        if not self.catalog.contains(name):
+            self.catalog.refresh()
+        return self.catalog.get(name)
+
     def _definition(self, request: ImageGenerationRequest) -> WorkflowDefinition:
+        catalog_definition: WorkflowDefinition | None = None
         workflow: Path | dict[str, Any]
         if isinstance(request.workflow, dict):
             workflow = request.workflow
             name = "inline"
+        elif isinstance(request.workflow, str):
+            if not self.catalog.contains(request.workflow):
+                self.catalog.refresh()
+            if self.catalog.contains(request.workflow):
+                catalog_definition = self.catalog.get(request.workflow)
+                workflow = catalog_definition.workflow
+                name = catalog_definition.name
+            else:
+                candidate = Path(request.workflow).expanduser()
+                if not candidate.exists():
+                    candidate = self.workflow_dir / (
+                        candidate.name if candidate.suffix else f"{candidate.name}.json"
+                    )
+                workflow = candidate
+                name = candidate.stem
         else:
             candidate = Path(request.workflow).expanduser()
             if not candidate.exists():
@@ -149,7 +244,14 @@ class ComfyUIProvider(BaseProvider):
                 )
             workflow = candidate
             name = candidate.stem
-        bindings: dict[str, InputBinding] = {}
+        bindings: dict[str, InputBinding] = (
+            {
+                key: value.model_copy(deep=True)
+                for key, value in catalog_definition.input_bindings.items()
+            }
+            if catalog_definition
+            else {}
+        )
         try:
             for key, value in request.bindings.items():
                 bindings[key] = InputBinding.model_validate(value)
@@ -159,7 +261,14 @@ class ComfyUIProvider(BaseProvider):
             name=name,
             workflow=workflow,
             input_bindings=bindings,
-            expected_output_nodes=request.expected_output_nodes,
+            expected_output_nodes=(
+                request.expected_output_nodes
+                if request.expected_output_nodes
+                else catalog_definition.expected_output_nodes
+                if catalog_definition
+                else []
+            ),
+            metadata=catalog_definition.metadata if catalog_definition else {},
         )
 
     async def _download_outputs(

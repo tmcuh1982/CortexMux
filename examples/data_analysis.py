@@ -3,4 +3,6 @@
 from cortexmux import CortexMux
 
 with CortexMux.from_env() as mux:
-    print(mux.analyze_data("sales.csv", instruction="Summarize sales.").report_markdown)
+    response = mux.analyze_data("sales.csv", instruction="Summarize sales.")
+    print(response.results)
+    print(response.calculation_verifications)

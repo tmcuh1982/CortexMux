@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.common import ChatMessage
@@ -102,8 +102,17 @@ class DataAnalysisRequest(CortexRequest):
     plan: Any | None = None
     interpretation_provider: str | None = None
     interpretation_model: str | None = None
+    verify_calculations: bool = True
+    require_verified_calculations: bool = False
     create_charts: bool = False
     strict_planning: bool = False
+
+    @model_validator(mode="after")
+    def verification_mode_is_consistent(self) -> DataAnalysisRequest:
+        """Strict verification requires calculation verification to be enabled."""
+        if self.require_verified_calculations and not self.verify_calculations:
+            raise ValueError("require_verified_calculations requires verify_calculations")
+        return self
 
     @field_validator("source")
     @classmethod

@@ -17,10 +17,17 @@ from cortexmux.core.router import Router
 from cortexmux.core.security import validate_provider_url
 from cortexmux.core.types import MessageRole, TaskType
 from cortexmux.providers.base import BaseProvider
-from cortexmux.providers.comfyui import ComfyUIClient, ComfyUIProvider
-from cortexmux.providers.data import DataAnalysisProvider
+from cortexmux.providers.comfyui import (
+    ComfyUIClient,
+    ComfyUIProvider,
+    WorkflowCatalogItem,
+    WorkflowDefinition,
+)
+from cortexmux.providers.data import DataAnalysisProvider, MathVerifier
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
+from cortexmux.schemas.calculations import CalculationClaim, CalculationVerification
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
+from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import (
     ChatRequest,
     CortexRequest,
@@ -60,6 +67,7 @@ class CortexMux:
         self.registry = ProviderRegistry()
         self.router = Router(self.registry, self.config)
         self._closed = False
+        self._sync_runner: asyncio.Runner | None = None
         if register_builtin_providers:
             self._register_builtins()
 
@@ -295,23 +303,23 @@ class CortexMux:
         workflow: str | Path | dict[str, Any] | None = None,
         provider: str | None = "comfyui",
         model: str | None = None,
+        on_progress: ProgressCallback | None = None,
         **fields: Any,
     ) -> ImageGenerationResponse:
         """Run a ComfyUI workflow asynchronously."""
         selected_workflow = workflow or self.config.providers.comfyui.default_workflow
         if selected_workflow is None:
             raise InvalidRequestError("image generation requires a workflow")
+        request = ImageGenerationRequest(
+            prompt=prompt,
+            workflow=selected_workflow,
+            provider=provider,
+            model=model,
+            **fields,
+        )
         return cast(
             ImageGenerationResponse,
-            await self.arun(
-                ImageGenerationRequest(
-                    prompt=prompt,
-                    workflow=selected_workflow,
-                    provider=provider,
-                    model=model,
-                    **fields,
-                )
-            ),
+            await self.router.route(request, on_progress=on_progress),
         )
 
     def generate_image(
@@ -321,14 +329,66 @@ class CortexMux:
         workflow: str | Path | dict[str, Any] | None = None,
         provider: str | None = "comfyui",
         model: str | None = None,
+        on_progress: ProgressCallback | None = None,
         **fields: Any,
     ) -> ImageGenerationResponse:
         """Run a ComfyUI workflow synchronously."""
         return self._sync(
             self.agenerate_image(
-                prompt, workflow=workflow, provider=provider, model=model, **fields
+                prompt,
+                workflow=workflow,
+                provider=provider,
+                model=model,
+                on_progress=on_progress,
+                **fields,
             )
         )
+
+    async def alist_workflows(
+        self,
+        provider: str = "comfyui",
+        *,
+        refresh: bool = True,
+    ) -> list[WorkflowCatalogItem]:
+        """List reusable workflows from a ComfyUI provider catalog."""
+        selected = self.registry.get(provider)
+        if not isinstance(selected, ComfyUIProvider):
+            raise InvalidRequestError(
+                "Workflow catalogs are available only for ComfyUI providers.",
+                provider=provider,
+            )
+        return selected.list_workflows(refresh=refresh)
+
+    def list_workflows(
+        self,
+        provider: str = "comfyui",
+        *,
+        refresh: bool = True,
+    ) -> list[WorkflowCatalogItem]:
+        """List reusable workflows synchronously."""
+        return self._sync(self.alist_workflows(provider, refresh=refresh))
+
+    async def aget_workflow(
+        self,
+        name: str,
+        provider: str = "comfyui",
+    ) -> WorkflowDefinition:
+        """Return one reusable workflow definition from a provider catalog."""
+        selected = self.registry.get(provider)
+        if not isinstance(selected, ComfyUIProvider):
+            raise InvalidRequestError(
+                "Workflow catalogs are available only for ComfyUI providers.",
+                provider=provider,
+            )
+        return selected.get_workflow(name)
+
+    def get_workflow(
+        self,
+        name: str,
+        provider: str = "comfyui",
+    ) -> WorkflowDefinition:
+        """Return one reusable workflow definition synchronously."""
+        return self._sync(self.aget_workflow(name, provider))
 
     async def aanalyze_data(
         self,
@@ -373,6 +433,26 @@ class CortexMux:
             )
         )
 
+    def verify_calculation(
+        self,
+        claim: CalculationClaim | dict[str, Any],
+        context: dict[str, Any],
+    ) -> CalculationVerification:
+        """Deterministically verify one structured AI calculation claim."""
+        try:
+            normalized = (
+                claim
+                if isinstance(claim, CalculationClaim)
+                else CalculationClaim.model_validate(claim)
+            )
+        except ValueError as exc:
+            raise InvalidRequestError("Calculation claim is invalid.") from exc
+        verifier = MathVerifier(
+            absolute_tolerance=self.config.data.math_absolute_tolerance,
+            relative_tolerance=self.config.data.math_relative_tolerance,
+        )
+        return verifier.verify(normalized, context)
+
     async def alist_models(self, provider: str) -> list[ModelInfo]:
         """List a provider's models asynchronously."""
         return await self.registry.get(provider).list_models()
@@ -398,13 +478,17 @@ class CortexMux:
     def close(self) -> None:
         """Close all provider resources synchronously."""
         self._sync(self.aclose())
+        if self._sync_runner is not None:
+            self._sync_runner.close()
+            self._sync_runner = None
 
-    @staticmethod
-    def _sync(awaitable: Coroutine[Any, Any, SyncT]) -> SyncT:
+    def _sync(self, awaitable: Coroutine[Any, Any, SyncT]) -> SyncT:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(awaitable)
+            if self._sync_runner is None:
+                self._sync_runner = asyncio.Runner()
+            return self._sync_runner.run(awaitable)
         if hasattr(awaitable, "close"):
             awaitable.close()
         raise InvalidRequestError(

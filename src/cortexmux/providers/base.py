@@ -8,6 +8,7 @@ from types import TracebackType
 from cortexmux.core.capabilities import ProviderCapability
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.common import HealthStatus, ModelInfo
+from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import CortexRequest
 from cortexmux.schemas.responses import CortexResponse
 
@@ -36,6 +37,14 @@ class BaseProvider(ABC):
     @abstractmethod
     async def execute(self, request: CortexRequest) -> CortexResponse:
         """Execute one normalized request."""
+
+    async def execute_with_progress(
+        self,
+        request: CortexRequest,
+        on_progress: ProgressCallback,
+    ) -> CortexResponse:
+        """Execute a request, ignoring progress when the provider has no event support."""
+        return await self.execute(request)
 
     async def close(self) -> None:
         """Release provider resources."""

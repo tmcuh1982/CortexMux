@@ -26,10 +26,9 @@ Data analysis is separate:
 
 ```text
 Validate local source → profile → optional structured plan → validate whitelist
-→ deterministic engine → deterministic charts → bounded optional interpretation
-→ structured response and Markdown report
+→ deterministic engine → bounded structured interpretation → independently
+verify every AI mathematical claim → structured response
 ```
 
 Providers and registries are instance scoped. Network clients support async
 cleanup and the facade supplies safe synchronous wrappers.
-

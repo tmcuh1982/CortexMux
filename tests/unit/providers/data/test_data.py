@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -11,8 +12,15 @@ from pydantic import ValidationError
 from cortexmux.core.config import DataConfig
 from cortexmux.core.exceptions import DataAnalysisError, DataSourceError
 from cortexmux.providers.data.engines import DuckDBEngine, PandasEngine, PolarsEngine
+from cortexmux.providers.data.math_verification import MathVerifier
 from cortexmux.providers.data.provider import DataAnalysisProvider
 from cortexmux.providers.data.schemas import AnalysisPlan
+from cortexmux.schemas.calculations import (
+    CalculationClaim,
+    CalculationOperand,
+    MathOperation,
+    VerificationStatus,
+)
 from cortexmux.schemas.requests import ChatRequest, DataAnalysisRequest, StructuredOutputRequest
 from cortexmux.schemas.responses import ChatResponse, StructuredResponse
 
@@ -53,6 +61,19 @@ def test_json_jsonl_and_invalid_file(tmp_path: Path) -> None:
         engine.load(bad, max_file_size_mb=1)
     with pytest.raises(DataSourceError):
         engine.load(json_path, max_file_size_mb=0)
+
+
+def test_extracted_website_records_are_copied() -> None:
+    engine = PandasEngine()
+    records = [
+        {"title": "Produit A", "price": 10.5},
+        {"title": "Produit B", "price": 12.0},
+    ]
+    frame = engine.load(records, max_file_size_mb=1)
+    records[0]["price"] = 999
+    assert frame["price"].tolist() == [10.5, 12.0]
+    single = engine.load({"title": "Produit C", "price": 8}, max_file_size_mb=1)
+    assert single.to_dict(orient="records") == [{"title": "Produit C", "price": 8}]
 
 
 def test_whitelisted_operations(csv_file: Path) -> None:
@@ -162,6 +183,31 @@ async def test_bounded_llm_planning_and_interpretation(csv_file: Path, tmp_path:
     async def executor(request: object) -> object:
         if isinstance(request, StructuredOutputRequest):
             prompts.append(request.prompt)
+            if (
+                request.json_schema
+                and request.json_schema.get("title") == "InterpretationWithCalculations"
+            ):
+                parsed = {
+                    "content": "The dataset contains four rows; half is two.",
+                    "calculations": [
+                        {
+                            "label": "Half of row count",
+                            "operation": "divide",
+                            "operands": [
+                                {"source_path": "/results/0/data/0/rows"},
+                                {"literal": 2},
+                            ],
+                            "claimed_result": 2,
+                        }
+                    ],
+                }
+                return StructuredResponse(
+                    provider="ollama",
+                    model=request.model,
+                    request_id=request.request_id,
+                    content="structured interpretation",
+                    parsed=parsed,
+                )
             return StructuredResponse(
                 provider="ollama",
                 model=request.model,
@@ -169,14 +215,7 @@ async def test_bounded_llm_planning_and_interpretation(csv_file: Path, tmp_path:
                 content='{"steps":[{"operation":"shape"}]}',
                 parsed={"steps": [{"operation": "shape"}]},
             )
-        assert isinstance(request, ChatRequest)
-        prompts.append(request.messages[0].content)
-        return ChatResponse(
-            provider="ollama",
-            model=request.model,
-            request_id=request.request_id,
-            content="The dataset contains four rows.",
-        )
+        raise AssertionError("verified interpretation must use structured output")
 
     provider = DataAnalysisProvider(
         DataConfig(max_prompt_characters=5000),
@@ -187,12 +226,14 @@ async def test_bounded_llm_planning_and_interpretation(csv_file: Path, tmp_path:
         DataAnalysisRequest(
             source=csv_file,
             provider="data",
-            instruction="Summarize.",
+            instruction="Calculate half of the row count.",
             interpretation_provider="ollama",
             interpretation_model="model",
         )
     )
-    assert response.interpretation == "The dataset contains four rows."
+    assert response.interpretation == "The dataset contains four rows; half is two."
+    assert response.math_verification_passed is True
+    assert response.calculation_verifications[0].status is VerificationStatus.VERIFIED
     assert response.plan is not None
     assert response.plan["steps"][0]["operation"] == "shape"
     assert response.disclosure["sample_rows"] == 4
@@ -239,8 +280,172 @@ async def test_planner_failure_falls_back_or_raises(csv_file: Path, tmp_path: Pa
         instruction="Summarize.",
         interpretation_provider="ollama",
         interpretation_model="model",
+        verify_calculations=False,
     )
     response = await provider.execute(request)
     assert "baseline plan" in response.warnings[0]
     with pytest.raises(DataAnalysisError):
         await provider.execute(request.model_copy(update={"strict_planning": True}))
+
+
+@pytest.mark.asyncio
+async def test_invalid_llm_plan_columns_fall_back(csv_file: Path, tmp_path: Path) -> None:
+    async def invalid_plan_executor(request: object) -> object:
+        if isinstance(request, StructuredOutputRequest):
+            return StructuredResponse(
+                provider="ollama",
+                model=request.model,
+                request_id=request.request_id,
+                content='{"steps":[{"operation":"describe","columns":["invented"]}]}',
+                parsed={"steps": [{"operation": "describe", "columns": ["invented"]}]},
+            )
+        assert isinstance(request, ChatRequest)
+        return ChatResponse(
+            provider="ollama",
+            model=request.model,
+            request_id=request.request_id,
+            content="Baseline interpretation.",
+        )
+
+    provider = DataAnalysisProvider(
+        DataConfig(),
+        output_dir=tmp_path,
+        request_executor=invalid_plan_executor,  # type: ignore[arg-type]
+    )
+    response = await provider.execute(
+        DataAnalysisRequest(
+            source=csv_file,
+            instruction="Summarize.",
+            interpretation_provider="ollama",
+            interpretation_model="model",
+            verify_calculations=False,
+        )
+    )
+    assert response.plan is not None
+    assert response.plan["steps"][0]["operation"] == "inspect_schema"
+    assert "deterministic baseline plan" in response.warnings[0]
+
+
+def test_math_verifier_correct_incorrect_and_unverifiable() -> None:
+    verifier = MathVerifier(
+        absolute_tolerance=Decimal("0.001"),
+        relative_tolerance=Decimal("0"),
+    )
+    context = {
+        "profile": {"rows": 4},
+        "results": [{"data": [{"current": 120, "previous": 100}]}],
+    }
+    correct = CalculationClaim(
+        label="Growth",
+        operation=MathOperation.PERCENTAGE_CHANGE,
+        operands=[
+            CalculationOperand(source_path="/results/0/data/0/current"),
+            CalculationOperand(source_path="/results/0/data/0/previous"),
+        ],
+        claimed_result=Decimal("20"),
+    )
+    assert verifier.verify(correct, context).status is VerificationStatus.VERIFIED
+
+    incorrect = correct.model_copy(update={"claimed_result": Decimal("25")})
+    mismatch = verifier.verify(incorrect, context)
+    assert mismatch.status is VerificationStatus.INCORRECT
+    assert mismatch.expected_result == Decimal("20")
+
+    missing = correct.model_copy(
+        update={
+            "operands": [
+                CalculationOperand(source_path="/results/99/data/0/current"),
+                CalculationOperand(literal=Decimal("1")),
+            ]
+        }
+    )
+    unavailable = verifier.verify(missing, context)
+    assert unavailable.status is VerificationStatus.UNVERIFIABLE
+    assert unavailable.expected_result is None
+
+
+@pytest.mark.asyncio
+async def test_provider_rejects_wrong_ai_calculation_in_strict_mode(
+    csv_file: Path, tmp_path: Path
+) -> None:
+    async def executor(request: object) -> object:
+        assert isinstance(request, StructuredOutputRequest)
+        if request.json_schema and request.json_schema.get("title") == "AnalysisPlan":
+            parsed: dict[str, object] = {"steps": [{"operation": "shape"}]}
+        else:
+            parsed = {
+                "content": "Half of four is three.",
+                "calculations": [
+                    {
+                        "label": "Half",
+                        "operation": "divide",
+                        "operands": [
+                            {"source_path": "/results/0/data/0/rows"},
+                            {"literal": 2},
+                        ],
+                        "claimed_result": 3,
+                    }
+                ],
+            }
+        return StructuredResponse(
+            provider="ollama",
+            model=request.model,
+            request_id=request.request_id,
+            content="structured",
+            parsed=parsed,
+        )
+
+    provider = DataAnalysisProvider(
+        DataConfig(),
+        output_dir=tmp_path,
+        request_executor=executor,  # type: ignore[arg-type]
+    )
+    request = DataAnalysisRequest(
+        source=csv_file,
+        instruction="Calculate half of the row count.",
+        interpretation_provider="ollama",
+        interpretation_model="model",
+    )
+    response = await provider.execute(request)
+    assert response.math_verification_passed is False
+    assert response.interpretation is None
+    assert response.unverified_interpretation == "Half of four is three."
+    assert response.calculation_verifications[0].status is VerificationStatus.INCORRECT
+    assert "failed deterministic verification" in response.warnings[-1]
+    with pytest.raises(DataAnalysisError, match="Strict mathematical verification failed"):
+        await provider.execute(request.model_copy(update={"require_verified_calculations": True}))
+
+
+@pytest.mark.asyncio
+async def test_sensitive_result_columns_are_not_sent_to_ai(csv_file: Path, tmp_path: Path) -> None:
+    prompts: list[str] = []
+
+    async def executor(request: object) -> object:
+        assert isinstance(request, StructuredOutputRequest)
+        prompts.append(request.prompt)
+        return StructuredResponse(
+            provider="ollama",
+            model=request.model,
+            request_id=request.request_id,
+            content="structured",
+            parsed={"content": "Résumé sans calcul.", "calculations": []},
+        )
+
+    provider = DataAnalysisProvider(
+        DataConfig(),
+        output_dir=tmp_path,
+        request_executor=executor,  # type: ignore[arg-type]
+    )
+    response = await provider.execute(
+        DataAnalysisRequest(
+            source=csv_file,
+            instruction="Summarize.",
+            plan={"steps": [{"operation": "top_n", "columns": ["value"], "n": 2}]},
+            interpretation_provider="ollama",
+            interpretation_model="model",
+        )
+    )
+    assert response.interpretation == "Résumé sans calcul."
+    assert "secret" not in prompts[0]
+    assert "hidden" not in prompts[0]
+    assert "private" not in prompts[0]

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "name": "text-to-image",
+  "description": "Generic text-to-image workflow using standard ComfyUI nodes.",
+  "workflow": "text_to_image.example.json",
+  "bindings": "text_to_image.bindings.example.json",
+  "expected_output_nodes": ["9"],
+  "metadata": {
+    "category": "image-generation",
+    "bundled_example": true
+  }
+}

@@ -16,8 +16,10 @@ from cortexmux.core.exceptions import (
     ConfigurationError,
     CortexMuxError,
     ProviderUnavailableError,
+    WorkflowValidationError,
 )
 from cortexmux.providers.comfyui.workflow import InputBinding, WorkflowDefinition
+from cortexmux.schemas.progress import ProgressEvent
 from cortexmux.version import __version__
 
 app = typer.Typer(help="One interface. Multiple models. Full control.", no_args_is_help=True)
@@ -25,7 +27,7 @@ models_app = typer.Typer(help="Inspect provider models.")
 image_app = typer.Typer(help="Generate images.")
 data_app = typer.Typer(help="Analyze local data.")
 config_app = typer.Typer(help="Inspect configuration.")
-workflows_app = typer.Typer(help="Validate ComfyUI workflows.")
+workflows_app = typer.Typer(help="Inspect and validate ComfyUI workflows.")
 app.add_typer(models_app, name="models")
 app.add_typer(image_app, name="image")
 app.add_typer(data_app, name="data")
@@ -150,21 +152,23 @@ def embed(
 
 @image_app.command("generate")
 def image_generate(
-    workflow: Path = typer.Option(..., "--workflow", exists=True, dir_okay=False),
-    bindings: Path = typer.Option(..., "--bindings", exists=True, dir_okay=False),
+    workflow: str = typer.Option(..., "--workflow"),
+    bindings: Path | None = typer.Option(None, "--bindings", exists=True, dir_okay=False),
     prompt: str = typer.Option(..., "--prompt"),
     checkpoint: str | None = typer.Option(None, "--checkpoint"),
+    progress: bool = typer.Option(True, "--progress/--no-progress"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Execute a ComfyUI API-format workflow."""
+    """Execute a ComfyUI workflow path or catalog name."""
     try:
-        binding_data = json.loads(bindings.read_text(encoding="utf-8"))
+        binding_data = json.loads(bindings.read_text(encoding="utf-8")) if bindings else {}
         with CortexMux.from_env() as mux:
             response = mux.generate_image(
                 prompt,
                 workflow=workflow,
                 bindings=binding_data,
                 checkpoint=checkpoint,
+                on_progress=_display_progress if progress and not as_json else None,
             )
         _response_output(response, as_json)
     except (CortexMuxError, OSError, json.JSONDecodeError) as exc:
@@ -179,6 +183,7 @@ def data_analyze(
     interpretation_provider: str | None = typer.Option(None, "--provider"),
     interpretation_model: str | None = typer.Option(None, "--model"),
     charts: bool = typer.Option(False, "--charts"),
+    require_verified_calculations: bool = typer.Option(False, "--require-verified-calculations"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Analyze a local tabular file deterministically."""
@@ -191,8 +196,13 @@ def data_analyze(
                 interpretation_provider=interpretation_provider,
                 interpretation_model=interpretation_model,
                 create_charts=charts,
+                require_verified_calculations=require_verified_calculations,
             )
-        _response_output(response, as_json, text_field="report_markdown")
+        if as_json:
+            _response_output(response, True)
+        else:
+            console.print(response.interpretation or response.results)
+            _display_calculation_verifications(response.calculation_verifications)
     except CortexMuxError as exc:
         _fail(exc)
 
@@ -203,6 +213,50 @@ def config_show(as_json: bool = typer.Option(False, "--json")) -> None:
     try:
         config = CortexMuxConfig.load()
         _display(config.model_dump(mode="json"), as_json)
+    except CortexMuxError as exc:
+        _fail(exc)
+
+
+@workflows_app.command("list")
+def workflows_list(as_json: bool = typer.Option(False, "--json")) -> None:
+    """List reusable workflows in the configured ComfyUI catalog."""
+    try:
+        with CortexMux.from_env() as mux:
+            workflows = mux.list_workflows()
+        payload = [workflow.model_dump(mode="json") for workflow in workflows]
+        if as_json:
+            _display(payload, True)
+            return
+        table = Table(title="ComfyUI workflow catalog")
+        table.add_column("Name")
+        table.add_column("Description")
+        table.add_column("Bindings")
+        table.add_column("Output nodes")
+        for workflow in workflows:
+            table.add_row(
+                workflow.name,
+                workflow.description or "",
+                ", ".join(workflow.binding_fields),
+                ", ".join(workflow.expected_output_nodes),
+            )
+        console.print(table)
+    except CortexMuxError as exc:
+        _fail(exc)
+
+
+@workflows_app.command("show")
+def workflows_show(
+    name: str = typer.Argument(...),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Show one reusable workflow catalog entry."""
+    try:
+        with CortexMux.from_env() as mux:
+            workflows = mux.list_workflows()
+        workflow = next((item for item in workflows if item.name == name), None)
+        if workflow is None:
+            raise WorkflowValidationError("Workflow is not present in the catalog.", name=name)
+        _display(workflow.model_dump(mode="json"), as_json)
     except CortexMuxError as exc:
         _fail(exc)
 
@@ -248,6 +302,30 @@ def _display(value: Any, as_json: bool) -> None:
         console.print_json(json.dumps(value, default=str))
     else:
         console.print(value)
+
+
+def _display_progress(event: ProgressEvent) -> None:
+    percent = f" {event.progress:.0%}" if event.progress is not None else ""
+    node = f" node={event.node_id}" if event.node_id else ""
+    console.print(f"[cyan]{event.stage.value}[/cyan]{percent}{node}: {event.message or ''}")
+
+
+def _display_calculation_verifications(verifications: list[Any]) -> None:
+    if not verifications:
+        return
+    table = Table(title="Mathematical verification")
+    table.add_column("Claim")
+    table.add_column("Status")
+    table.add_column("Claimed")
+    table.add_column("Expected")
+    for verification in verifications:
+        table.add_row(
+            verification.label,
+            verification.status.value,
+            str(verification.claimed_result),
+            str(verification.expected_result) if verification.expected_result is not None else "",
+        )
+    console.print(table)
 
 
 def _optional_status() -> dict[str, bool]:

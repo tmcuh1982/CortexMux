@@ -15,9 +15,10 @@ surface is tested, but production deployments should pin the patch version.
 
 - Deterministic provider/model routing with no ambiguous fallback.
 - Native Ollama text, chat, JSON, vision, embedding, and incremental streaming.
-- Native ComfyUI API-workflow binding, queueing, monitoring, and safe downloads.
+- Native ComfyUI workflow catalogs, typed progress, binding, queueing, and safe downloads.
 - Safe Pandas analysis plus optional Polars and DuckDB loading.
-- Whitelisted analysis plans and deterministic Matplotlib charts.
+- Whitelisted analysis plans and bounded structured results.
+- Independent Decimal-based verification of structured AI calculation claims.
 - Typed Pydantic schemas, synchronous/asynchronous APIs, Typer CLI, and TOML/env config.
 - Loopback-only network policy by default.
 
@@ -73,30 +74,39 @@ format. Bind normalized fields to node inputs:
 ```python
 result = mux.generate_image(
     prompt="An industrial sensor in a wheat field",
-    workflow="workflows/text-to-image.json",
-    bindings={"prompt": {"node_id": "6", "input": "text"}},
-    expected_output_nodes=["9"],
+    workflow="text-to-image",
+    checkpoint="model.safetensors",
+    on_progress=lambda event: print(event.stage.value, event.progress),
 )
 ```
 
-Bindings are strict by default and the original graph is never mutated. See
-[ComfyUI workflows](docs/comfyui-workflows.md).
+The name resolves a `.cortexmux.json` manifest from the configured workflow
+directory. Direct graph paths and inline graphs remain supported. Bindings are
+strict by default and the original graph is never mutated. See [ComfyUI
+workflows](docs/comfyui-workflows.md).
 
 ## Data analysis
 
 ```python
 result = mux.analyze_data(
-    "sales.csv",
-    instruction="Analyze monthly revenue and unusual changes.",
+    extracted_records,
+    instruction="Calcule l'évolution moyenne des prix.",
     engine="auto",
+    interpretation_provider="ollama",
+    interpretation_model="qwen2.5-coder:7b",
+    require_verified_calculations=True,
 )
-print(result.report_markdown)
+print(result.results)
+print(result.math_verification_passed)
 ```
 
-Without an interpretation model, this is entirely deterministic. If local
-Ollama interpretation is configured, only a redacted bounded sample, schema,
-aggregates, and results are sent. The model never executes code or SQL. See
-[data analysis](docs/data-analysis.md) and [security](docs/data-analysis-security.md).
+`extracted_records` can be a dictionary or a list of dictionaries produced by
+a website extraction layer. CortexMux does not fetch arbitrary URLs. Without
+an interpretation model, analysis is entirely deterministic. With local
+Ollama, only a redacted bounded sample, schema, aggregates, and results are
+sent. Numerical claims are independently recalculated from structured source
+references; the model never executes code or SQL. See [data
+analysis](docs/data-analysis.md) and [security](docs/data-analysis-security.md).
 
 ## CLI
 
@@ -105,11 +115,32 @@ cortexmux version
 cortexmux doctor
 cortexmux providers
 cortexmux models list --provider ollama
+cortexmux workflows list
 cortexmux chat --provider ollama --model my-model --prompt "Hello"
+cortexmux image generate --workflow text-to-image --prompt "A local workflow"
 cortexmux data analyze sales.csv --engine auto
 ```
 
 Commands that return structured values support `--json`.
+
+## End-to-end local demonstration
+
+The complete demo creates a CSV dataset, lists every provider model or data
+engine known to CortexMux, runs deterministic analysis, uses a local
+`qwen2.5-coder` Ollama tag for interpretation, and generates an image through
+ComfyUI when both services are available:
+
+```bash
+python examples/full_local_demo.py
+python examples/full_local_demo.py --strict
+python examples/full_local_demo.py \
+  --ollama-model qwen2.5-coder \
+  --checkpoint my-checkpoint.safetensors
+```
+
+The untagged Ollama name resolves installed tags such as
+`qwen2.5-coder:latest`. Without `--strict`, unavailable local services are
+reported and the deterministic CSV analysis still runs.
 
 ## Configuration
 
@@ -147,4 +178,3 @@ twine check dist/*
 
 See [CONTRIBUTING](CONTRIBUTING.md), [ROADMAP](ROADMAP.md), and
 [CHANGELOG](CHANGELOG.md). CortexMux is available under the [MIT License](LICENSE).
-

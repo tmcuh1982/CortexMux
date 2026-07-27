@@ -16,6 +16,8 @@ from cortexmux.core.exceptions import (
     ProviderUnavailableError,
     WorkflowExecutionError,
 )
+from cortexmux.core.types import ProgressStage
+from cortexmux.schemas.progress import ProgressCallback, ProgressEvent, emit_progress
 
 
 class ComfyUIClient:
@@ -139,6 +141,7 @@ class ComfyUIClient:
         client_id: str,
         request_id: str,
         timeout: float,
+        on_progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Monitor WebSocket progress, then use history as the completion authority."""
         try:
@@ -146,22 +149,132 @@ class ComfyUIClient:
                 async for event in self.websocket_events(client_id):
                     event_type = event.get("type")
                     data = event.get("data")
+                    if (
+                        isinstance(data, dict)
+                        and isinstance(data.get("prompt_id"), str)
+                        and data["prompt_id"] != prompt_id
+                    ):
+                        continue
+                    progress_event = self.normalize_progress_event(
+                        event,
+                        request_id=request_id,
+                        prompt_id=prompt_id,
+                        client_id=client_id,
+                    )
+                    if progress_event is not None:
+                        await emit_progress(on_progress, progress_event)
                     if event_type in {"execution_error", "execution_interrupted"}:
                         raise WorkflowExecutionError(
-                            "ComfyUI reported workflow execution failure.",
+                            progress_event.message
+                            if progress_event and progress_event.message
+                            else "ComfyUI reported workflow execution failure.",
                             prompt_id=prompt_id,
                             request_id=request_id,
                         )
-                    if (
+                    if event_type == "execution_success" or (
                         event_type == "executing"
                         and isinstance(data, dict)
-                        and data.get("prompt_id") == prompt_id
                         and data.get("node") is None
                     ):
                         break
         except (TimeoutError, OSError):
             pass
         return await self.wait_for_history(prompt_id, request_id=request_id, timeout=timeout)
+
+    @staticmethod
+    def normalize_progress_event(
+        event: dict[str, Any],
+        *,
+        request_id: str,
+        prompt_id: str,
+        client_id: str,
+    ) -> ProgressEvent | None:
+        """Normalize a raw ComfyUI WebSocket message into a typed event."""
+        event_type = event.get("type")
+        data = event.get("data")
+        if not isinstance(event_type, str) or not isinstance(data, dict):
+            return None
+
+        stage: ProgressStage
+        message: str | None = None
+        node_id = str(data["node"]) if data.get("node") is not None else None
+        current = _number(data.get("value"))
+        total = _number(data.get("max"))
+        queue_remaining: int | None = None
+
+        if event_type == "status":
+            stage = ProgressStage.STATUS
+            status = data.get("status")
+            exec_info = status.get("exec_info") if isinstance(status, dict) else None
+            remaining = exec_info.get("queue_remaining") if isinstance(exec_info, dict) else None
+            queue_remaining = remaining if isinstance(remaining, int) and remaining >= 0 else None
+            message = (
+                f"{queue_remaining} workflow(s) remaining in queue."
+                if queue_remaining is not None
+                else "ComfyUI queue status updated."
+            )
+        elif event_type == "execution_start":
+            stage = ProgressStage.EXECUTION_STARTED
+            message = "ComfyUI started workflow execution."
+        elif event_type == "execution_cached":
+            stage = ProgressStage.EXECUTION_CACHED
+            message = "ComfyUI reused cached node outputs."
+        elif event_type == "executing":
+            if node_id is None:
+                stage = ProgressStage.EXECUTION_COMPLETED
+                message = "ComfyUI completed workflow execution."
+            else:
+                stage = ProgressStage.NODE_STARTED
+                message = f"ComfyUI started node {node_id}."
+        elif event_type == "progress":
+            stage = ProgressStage.NODE_PROGRESS
+            message = f"ComfyUI is processing node {node_id}." if node_id else "ComfyUI progress."
+        elif event_type == "executed":
+            stage = ProgressStage.NODE_COMPLETED
+            message = f"ComfyUI completed node {node_id}." if node_id else "ComfyUI node completed."
+        elif event_type == "execution_success":
+            stage = ProgressStage.EXECUTION_COMPLETED
+            message = "ComfyUI completed workflow execution."
+        elif event_type in {"execution_error", "execution_interrupted"}:
+            stage = ProgressStage.ERROR
+            detail = data.get("exception_message")
+            message = str(detail) if detail else "ComfyUI reported workflow execution failure."
+        else:
+            return None
+
+        progress = None
+        if current is not None and total is not None and total > 0:
+            progress = min(max(float(current) / float(total), 0.0), 1.0)
+        metadata = {
+            key: value
+            for key, value in data.items()
+            if key
+            not in {
+                "node",
+                "value",
+                "max",
+                "prompt_id",
+                "status",
+                "output",
+                "exception_message",
+                "traceback",
+            }
+        }
+        return ProgressEvent(
+            request_id=request_id,
+            provider="comfyui",
+            stage=stage,
+            message=message,
+            prompt_id=prompt_id,
+            client_id=client_id,
+            node_id=node_id,
+            current=current,
+            total=total,
+            progress=progress,
+            queue_remaining=queue_remaining,
+            raw_event_type=event_type,
+            metadata=metadata,
+        )
 
     async def websocket_events(self, client_id: str) -> AsyncIterator[dict[str, Any]]:
         """Yield ComfyUI WebSocket events when the optional dependency is installed."""
@@ -219,3 +332,9 @@ class ComfyUIClient:
         """Close an internally created HTTP client."""
         if self._owns_client:
             await self._client.aclose()
+
+
+def _number(value: Any) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None

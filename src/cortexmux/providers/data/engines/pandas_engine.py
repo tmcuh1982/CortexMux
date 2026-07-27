@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from importlib import import_module
 from pathlib import Path
@@ -39,8 +40,14 @@ class PandasEngine(BaseDataEngine):
             return source.copy(deep=True)
         if source.__class__.__module__.startswith("polars") and hasattr(source, "to_dicts"):
             return pd.DataFrame(source.to_dicts())
+        if isinstance(source, dict):
+            return pd.DataFrame([copy.deepcopy(source)])
+        if isinstance(source, list) and all(isinstance(row, dict) for row in source):
+            return pd.DataFrame(copy.deepcopy(source))
         if not isinstance(source, str | Path):
-            raise DataSourceError("Data source must be a path or supported dataframe.")
+            raise DataSourceError(
+                "Data source must be a path, extracted records, or supported dataframe."
+            )
         path = validate_source_path(source, max_file_size_mb=max_file_size_mb)
         suffix = path.suffix.lower()
         try:

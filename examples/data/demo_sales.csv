@@ -1,0 +1,17 @@
+date,region,category,units,unit_price_eur,satisfaction,support_incidents,api_token,revenue_eur
+2026-01-05,Nord,Capteur,12,420.0,4.7,0,tok_demo_nord,5040.0
+2026-01-18,Sud,Passerelle,7,690.0,4.4,1,tok_demo_sud,4830.0
+2026-02-04,Est,Capteur,15,420.0,4.6,0,tok_demo_est,6300.0
+2026-02-21,Ouest,Abonnement,28,49.0,4.2,2,tok_demo_ouest,1372.0
+2026-03-02,Nord,Passerelle,9,690.0,4.8,0,tok_demo_nord,6210.0
+2026-03-23,Sud,Capteur,19,420.0,4.1,3,tok_demo_sud,7980.0
+2026-04-07,Est,Abonnement,36,49.0,4.5,1,tok_demo_est,1764.0
+2026-04-26,Ouest,Capteur,17,420.0,4.3,0,tok_demo_ouest,7140.0
+2026-05-09,Nord,Capteur,21,420.0,4.9,0,tok_demo_nord,8820.0
+2026-05-19,Sud,Passerelle,11,690.0,4.0,4,tok_demo_sud,7590.0
+2026-06-03,Est,Capteur,18,420.0,4.6,1,tok_demo_est,7560.0
+2026-06-27,Ouest,Abonnement,42,49.0,4.4,0,tok_demo_ouest,2058.0
+2026-07-06,Nord,Passerelle,13,690.0,4.8,0,tok_demo_nord,8970.0
+2026-07-22,Sud,Capteur,24,420.0,3.8,6,tok_demo_sud,10080.0
+2026-08-08,Est,Abonnement,48,49.0,4.7,0,tok_demo_est,2352.0
+2026-08-24,Ouest,Capteur,20,420.0,4.5,1,tok_demo_ouest,8400.0
