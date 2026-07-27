@@ -1,0 +1,41 @@
+[core]
+output_dir = "./outputs"
+allow_remote_hosts = false
+approved_hosts = []
+log_level = "INFO"
+
+[providers.ollama]
+enabled = true
+base_url = "http://localhost:11434"
+timeout_seconds = 120
+
+[providers.ollama.defaults]
+chat = ""
+text_generation = ""
+structured_output = ""
+vision = ""
+embedding = ""
+
+[providers.comfyui]
+enabled = true
+base_url = "http://127.0.0.1:8188"
+timeout_seconds = 600
+workflow_dir = "./workflows"
+default_workflow = ""
+model_folders = ["checkpoints"]
+
+[routing.defaults]
+chat_provider = "ollama"
+vision_provider = "ollama"
+embedding_provider = "ollama"
+image_generation_provider = "comfyui"
+data_analysis_provider = "data"
+
+[data]
+engine = "auto"
+max_file_size_mb = 500
+max_sample_rows = 50
+max_result_rows = 200
+max_plan_steps = 20
+max_charts = 5
+

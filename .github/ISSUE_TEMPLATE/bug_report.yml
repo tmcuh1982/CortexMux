@@ -1,0 +1,13 @@
+name: Bug report
+description: Report a reproducible CortexMux defect.
+body:
+  - type: textarea
+    attributes: {label: Description}
+    validations: {required: true}
+  - type: textarea
+    attributes: {label: Reproduction}
+    validations: {required: true}
+  - type: input
+    attributes: {label: CortexMux and Python versions}
+    validations: {required: true}
+
