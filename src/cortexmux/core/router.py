@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 
 from cortexmux.core.config import CortexMuxConfig
-from cortexmux.core.exceptions import ModelSelectionError, UnsupportedTaskError
+from cortexmux.core.exceptions import ModelNotFoundError, ModelSelectionError, UnsupportedTaskError
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.providers.base import BaseProvider
 from cortexmux.schemas.common import RoutingMetadata
@@ -55,6 +55,14 @@ class Router:
                 )
             return candidates[0], request.model, "explicit_model_unique_provider"
 
+        profile = self.config.routing.profile_for(request.model_profile)
+        if profile is not None:
+            route = profile.route_for(request.task)
+            if route is not None:
+                provider = self.registry.get(route.provider)
+                self._ensure_support(provider, request, route.model)
+                return provider, route.model, "configured_model_profile"
+
         provider_name = self.config.routing.defaults.provider_for(request.task)
         if provider_name:
             provider = self.registry.get(provider_name)
@@ -84,6 +92,7 @@ class Router:
         started_at = datetime.now(UTC)
         started_clock = perf_counter()
         provider, model, reason = self.select(request)
+        await self._ensure_model_is_available(provider, model, request)
         selected_request = request.model_copy(update={"provider": provider.name, "model": model})
         if on_progress is None:
             response = await provider.execute(selected_request)
@@ -113,4 +122,25 @@ class Router:
                 task=request.task.value,
                 model=model,
                 request_id=request.request_id,
+            )
+
+    async def _ensure_model_is_available(
+        self,
+        provider: BaseProvider,
+        model: str | None,
+        request: CortexRequest,
+    ) -> None:
+        """Require the selected model to be present when project policy enables it."""
+        if model is None or not self.config.routing.validate_model_availability:
+            return
+        installed = await provider.list_models()
+        installed_names = {item.name for item in installed}
+        if model not in installed_names:
+            raise ModelNotFoundError(
+                "The selected model is not installed for this provider.",
+                provider=provider.name,
+                model=model,
+                task=request.task.value,
+                request_id=request.request_id,
+                installed_models=sorted(installed_names)[:20],
             )

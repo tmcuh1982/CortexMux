@@ -4,6 +4,13 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Named project model profiles, selectable globally or per request, with exact
+  provider/model routes by task.
+- Pre-execution installed-model validation, enabled by default, raising
+  `ModelNotFoundError` before a provider request is made.
+
 ## [0.2.0] - 2026-07-27
 
 ### Added

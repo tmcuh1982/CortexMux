@@ -26,12 +26,33 @@ workflow_dir = "./workflows"
 default_workflow = ""
 model_folders = ["checkpoints"]
 
+# Projects may choose a named profile globally, or pass model_profile="fast"
+# on an individual request. Explicit provider/model arguments still take precedence.
+[routing]
+active_profile = "balanced"
+validate_model_availability = true
+
 [routing.defaults]
 chat_provider = "ollama"
+text_generation_provider = "ollama"
+structured_output_provider = "ollama"
 vision_provider = "ollama"
 embedding_provider = "ollama"
 image_generation_provider = "comfyui"
 data_analysis_provider = "data"
+
+[routing.profiles.fast]
+chat = { provider = "ollama", model = "llama3.2:1b" }
+text_generation = { provider = "ollama", model = "llama3.2:1b" }
+structured_output = { provider = "ollama", model = "qwen3:4b" }
+embedding = { provider = "ollama", model = "nomic-embed-text" }
+
+[routing.profiles.balanced]
+chat = { provider = "ollama", model = "qwen3:4b" }
+text_generation = { provider = "ollama", model = "qwen3:4b" }
+structured_output = { provider = "ollama", model = "qwen3:4b" }
+vision = { provider = "ollama", model = "gemma3:4b" }
+embedding = { provider = "ollama", model = "nomic-embed-text" }
 
 [data]
 engine = "auto"

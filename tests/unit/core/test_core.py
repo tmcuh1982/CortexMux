@@ -9,6 +9,7 @@ import pytest
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import (
     InvalidRequestError,
+    ModelNotFoundError,
     ModelSelectionError,
     OutputPathError,
     ProviderNotFoundError,
@@ -68,6 +69,68 @@ async def test_explicit_and_default_routing() -> None:
     assert default.model == "default"
     assert default.routing is not None
     assert default.routing.routing_reason == "configured_task_default"
+
+
+@pytest.mark.asyncio
+async def test_project_model_profiles_select_installed_models() -> None:
+    config = CortexMuxConfig.model_validate(
+        {
+            "routing": {
+                "active_profile": "fast",
+                "profiles": {
+                    "fast": {"text_generation": {"provider": "ollama", "model": "fast-model"}},
+                    "balanced": {
+                        "text_generation": {
+                            "provider": "ollama",
+                            "model": "balanced-model",
+                        }
+                    },
+                },
+            }
+        }
+    )
+    registry = ProviderRegistry()
+    registry.register(StubProvider("ollama", models={"fast-model", "balanced-model"}))
+    router = Router(registry, config)
+
+    default = await router.route(TextGenerationRequest(prompt="hello"))
+    selected = await router.route(TextGenerationRequest(prompt="hello", model_profile="balanced"))
+
+    assert default.model == "fast-model"
+    assert default.routing is not None
+    assert default.routing.routing_reason == "configured_model_profile"
+    assert selected.model == "balanced-model"
+
+
+@pytest.mark.asyncio
+async def test_router_rejects_uninstalled_model_before_execution() -> None:
+    registry = ProviderRegistry()
+    provider = StubProvider("ollama", models=None)
+    registry.register(provider)
+    router = Router(registry, CortexMuxConfig())
+
+    with pytest.raises(ModelNotFoundError) as exc_info:
+        await router.route(
+            TextGenerationRequest(provider="ollama", model="not-installed", prompt="hello")
+        )
+
+    assert exc_info.value.context["model"] == "not-installed"
+    assert provider.requests == []
+
+
+@pytest.mark.asyncio
+async def test_router_can_disable_installed_model_validation() -> None:
+    config = CortexMuxConfig.model_validate({"routing": {"validate_model_availability": False}})
+    registry = ProviderRegistry()
+    provider = StubProvider("ollama", models=None)
+    registry.register(provider)
+
+    response = await Router(registry, config).route(
+        TextGenerationRequest(provider="ollama", model="not-listed", prompt="hello")
+    )
+
+    assert response.model == "not-listed"
+    assert len(provider.requests) == 1
 
 
 def test_explicit_provider_missing_default_fails() -> None:

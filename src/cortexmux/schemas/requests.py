@@ -21,6 +21,7 @@ class CortexRequest(BaseModel):
     task: TaskType
     provider: str | None = None
     model: str | None = None
+    model_profile: str | None = Field(default=None, min_length=1)
     timeout: float | None = Field(default=None, gt=0)
     metadata: dict[str, str | int | float | bool] = Field(default_factory=dict)
     options: dict[str, str | int | float | bool | list[str]] = Field(default_factory=dict)

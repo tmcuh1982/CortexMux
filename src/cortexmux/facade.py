@@ -134,9 +134,8 @@ class CortexMux:
         )
 
     async def _execute_nested(self, request: CortexRequest) -> CortexResponse:
-        if request.provider is None:
-            return await self.router.route(request)
-        return await self.registry.get(request.provider).execute(request)
+        """Route internal model requests through the same validation policy."""
+        return await self.router.route(request)
 
     def register_provider(self, provider: BaseProvider, *, replace: bool = False) -> None:
         """Register a custom provider on this facade instance."""
@@ -154,19 +153,45 @@ class CortexMux:
         return self._sync(self.arun(request, **fields))
 
     async def agenerate(
-        self, prompt: str, *, provider: str | None = None, model: str | None = None, **options: Any
+        self,
+        prompt: str,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
     ) -> TextResponse:
         """Generate text asynchronously."""
         response = await self.arun(
-            TextGenerationRequest(prompt=prompt, provider=provider, model=model, options=options)
+            TextGenerationRequest(
+                prompt=prompt,
+                provider=provider,
+                model=model,
+                model_profile=model_profile,
+                options=options,
+            )
         )
         return cast(TextResponse, response)
 
     def generate(
-        self, prompt: str, *, provider: str | None = None, model: str | None = None, **options: Any
+        self,
+        prompt: str,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
     ) -> TextResponse:
         """Generate text synchronously."""
-        return self._sync(self.agenerate(prompt, provider=provider, model=model, **options))
+        return self._sync(
+            self.agenerate(
+                prompt,
+                provider=provider,
+                model=model,
+                model_profile=model_profile,
+                **options,
+            )
+        )
 
     async def achat(
         self,
@@ -175,6 +200,7 @@ class CortexMux:
         messages: list[ChatMessage] | None = None,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
         **options: Any,
     ) -> ChatResponse:
         """Run a chat request asynchronously."""
@@ -184,7 +210,13 @@ class CortexMux:
         if not normalized:
             raise InvalidRequestError("chat requires prompt or messages")
         response = await self.arun(
-            ChatRequest(messages=normalized, provider=provider, model=model, options=options)
+            ChatRequest(
+                messages=normalized,
+                provider=provider,
+                model=model,
+                model_profile=model_profile,
+                options=options,
+            )
         )
         return cast(ChatResponse, response)
 
@@ -195,11 +227,19 @@ class CortexMux:
         messages: list[ChatMessage] | None = None,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
         **options: Any,
     ) -> ChatResponse:
         """Run a chat request synchronously."""
         return self._sync(
-            self.achat(prompt, messages=messages, provider=provider, model=model, **options)
+            self.achat(
+                prompt,
+                messages=messages,
+                provider=provider,
+                model=model,
+                model_profile=model_profile,
+                **options,
+            )
         )
 
     async def astructured(
@@ -210,6 +250,7 @@ class CortexMux:
         json_schema: dict[str, Any] | None = None,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
         system: str | None = None,
     ) -> StructuredResponse:
         """Generate and validate structured JSON asynchronously."""
@@ -221,6 +262,7 @@ class CortexMux:
                     prompt=prompt,
                     provider=provider,
                     model=model,
+                    model_profile=model_profile,
                     json_schema=schema,
                     system=system,
                 )
@@ -238,6 +280,7 @@ class CortexMux:
         json_schema: dict[str, Any] | None = None,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
         system: str | None = None,
     ) -> StructuredResponse:
         """Generate and validate structured JSON synchronously."""
@@ -248,6 +291,7 @@ class CortexMux:
                 json_schema=json_schema,
                 provider=provider,
                 model=model,
+                model_profile=model_profile,
                 system=system,
             )
         )
@@ -259,13 +303,20 @@ class CortexMux:
         prompt: str,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
     ) -> VisionResponse:
         """Analyze one or more images asynchronously."""
         images = image if isinstance(image, list) else [image]
         return cast(
             VisionResponse,
             await self.arun(
-                VisionRequest(prompt=prompt, images=images, provider=provider, model=model)
+                VisionRequest(
+                    prompt=prompt,
+                    images=images,
+                    provider=provider,
+                    model=model,
+                    model_profile=model_profile,
+                )
             ),
         )
 
@@ -276,9 +327,18 @@ class CortexMux:
         prompt: str,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
     ) -> VisionResponse:
         """Analyze one or more images synchronously."""
-        return self._sync(self.avision(image, prompt=prompt, provider=provider, model=model))
+        return self._sync(
+            self.avision(
+                image,
+                prompt=prompt,
+                provider=provider,
+                model=model,
+                model_profile=model_profile,
+            )
+        )
 
     async def aembed(
         self,
@@ -286,12 +346,20 @@ class CortexMux:
         *,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
     ) -> EmbeddingResponse:
         """Create one or more embeddings asynchronously."""
         values = [inputs] if isinstance(inputs, str) else inputs
         return cast(
             EmbeddingResponse,
-            await self.arun(EmbeddingRequest(inputs=values, provider=provider, model=model)),
+            await self.arun(
+                EmbeddingRequest(
+                    inputs=values,
+                    provider=provider,
+                    model=model,
+                    model_profile=model_profile,
+                )
+            ),
         )
 
     def embed(
@@ -300,9 +368,17 @@ class CortexMux:
         *,
         provider: str | None = None,
         model: str | None = None,
+        model_profile: str | None = None,
     ) -> EmbeddingResponse:
         """Create one or more embeddings synchronously."""
-        return self._sync(self.aembed(inputs, provider=provider, model=model))
+        return self._sync(
+            self.aembed(
+                inputs,
+                provider=provider,
+                model=model,
+                model_profile=model_profile,
+            )
+        )
 
     async def agenerate_image(
         self,

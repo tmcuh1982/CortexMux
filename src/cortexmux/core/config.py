@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from platformdirs import user_config_dir
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from cortexmux.core.exceptions import ConfigurationError
 from cortexmux.core.types import TaskType
@@ -91,10 +91,58 @@ class RoutingDefaults(BaseModel):
         return getattr(self, f"{task.value}_provider", None)
 
 
+class TaskModelRoute(BaseModel):
+    """Explicit provider and installed model for one task in a project profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+
+
+class ModelProfile(BaseModel):
+    """Named project-specific model choices grouped by CortexMux task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chat: TaskModelRoute | None = None
+    text_generation: TaskModelRoute | None = None
+    structured_output: TaskModelRoute | None = None
+    vision: TaskModelRoute | None = None
+    embedding: TaskModelRoute | None = None
+
+    def route_for(self, task: TaskType) -> TaskModelRoute | None:
+        """Return the configured route for a model-backed task."""
+        value = getattr(self, task.value, None)
+        return value if isinstance(value, TaskModelRoute) else None
+
+
 class RoutingConfig(BaseModel):
     """Routing configuration namespace."""
 
     defaults: RoutingDefaults = Field(default_factory=RoutingDefaults)
+    active_profile: str | None = None
+    profiles: dict[str, ModelProfile] = Field(default_factory=dict)
+    validate_model_availability: bool = True
+
+    @model_validator(mode="after")
+    def active_profile_must_exist(self) -> RoutingConfig:
+        """Reject a selected profile that is not defined by this project."""
+        if self.active_profile is not None and self.active_profile not in self.profiles:
+            raise ValueError("routing.active_profile must name a configured routing profile")
+        return self
+
+    def profile_for(self, name: str | None = None) -> ModelProfile | None:
+        """Return the requested profile, or this project's active profile."""
+        selected = name if name is not None else self.active_profile
+        if selected is None:
+            return None
+        try:
+            return self.profiles[selected]
+        except KeyError as exc:
+            raise ConfigurationError(
+                "Routing profile is not configured.", profile=selected
+            ) from exc
 
 
 class DataConfig(BaseModel):
