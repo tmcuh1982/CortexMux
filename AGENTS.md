@@ -44,7 +44,8 @@ Explicit URL → web security policy → bounded HTTP response
 
 ## Network and web security
 
-- Provider endpoints remain loopback-only unless separately approved.
+- Provider endpoints remain loopback-only unless separately approved. Never
+  transmit data to a remote endpoint silently.
 - Web retrieval is independent, opt-in, and disabled by default.
 - A model never receives direct network access. Fetch and clean the page first,
   then provide only bounded extracted content.
@@ -57,7 +58,8 @@ Explicit URL → web security policy → bounded HTTP response
 - Never log secrets, complete sensitive datasets, full binary data, base64
   images, or URLs containing sensitive query values.
 - Any test that contacts a real service or the public Internet is an integration
-  test. Unit tests must use `httpx.MockTransport` and require no network.
+  test. Unit tests must use `httpx.MockTransport`, require no network, and never
+  depend on a running Ollama or ComfyUI instance.
 
 Relevant implementation:
 

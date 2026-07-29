@@ -53,6 +53,7 @@ class StructuredOutputRequest(CortexRequest):
     prompt: str = Field(min_length=1)
     json_schema: dict[str, Any] | None = None
     system: str | None = None
+    think: bool | None = None
 
 
 class VisionRequest(CortexRequest):

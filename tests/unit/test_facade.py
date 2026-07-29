@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -268,3 +269,38 @@ def test_sync_network_calls_share_one_event_loop() -> None:
     with mux:
         assert mux.health()[0].available
         assert mux.list_models("ollama")[0].name == "qwen2.5-coder:7b"
+
+
+def test_structured_ollama_think_is_sent_at_payload_root() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"response": '{"name":"ok"}'})
+
+    client = httpx.AsyncClient(
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+    config = CortexMuxConfig.model_validate({"routing": {"validate_model_availability": False}})
+    mux = CortexMux(config, register_builtin_providers=False)
+    mux.register_provider(
+        OllamaProvider(OllamaClient("http://localhost:11434", timeout=2, client=client))
+    )
+
+    with mux:
+        response = mux.structured(
+            prompt="Return a name.",
+            json_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+            provider="ollama",
+            model="qwen3:4b",
+            think=False,
+        )
+
+    assert response.parsed == {"name": "ok"}
+    assert bodies[0]["think"] is False
+    assert "think" not in bodies[0]["options"]

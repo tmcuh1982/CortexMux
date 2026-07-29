@@ -210,6 +210,8 @@ class OllamaProvider(BaseProvider):
         }
         if request.system:
             payload["system"] = request.system
+        if request.think is not None:
+            payload["think"] = request.think
         payload["options"] = request.options
         data = await self.client.post(OllamaClient.GENERATE, payload, request_id=request.request_id)
         content = _required_string(data, "response", request.request_id)

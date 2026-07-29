@@ -45,14 +45,14 @@ data_analysis_provider = "data"
 chat = { provider = "ollama", model = "llama3.2:1b" }
 text_generation = { provider = "ollama", model = "llama3.2:1b" }
 structured_output = { provider = "ollama", model = "qwen3:4b" }
-embedding = { provider = "ollama", model = "nomic-embed-text" }
+embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
 
 [routing.profiles.balanced]
 chat = { provider = "ollama", model = "qwen3:4b" }
 text_generation = { provider = "ollama", model = "qwen3:4b" }
 structured_output = { provider = "ollama", model = "qwen3:4b" }
 vision = { provider = "ollama", model = "gemma3:4b" }
-embedding = { provider = "ollama", model = "nomic-embed-text" }
+embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
 
 [data]
 engine = "auto"

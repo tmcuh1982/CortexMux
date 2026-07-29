@@ -1,20 +1,24 @@
-"""Pydantic-validated structured output."""
-
-from pydantic import BaseModel
+"""JSON Schema-validated structured output with an Ollama reasoning model."""
 
 from cortexmux import CortexMux
 
-
-class Summary(BaseModel):
-    """Example response contract."""
-
-    name: str
-    function: str
+schema = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "function": {"type": "string"},
+    },
+    "required": ["name", "function"],
+}
 
 
 with CortexMux.from_env() as mux:
     print(
         mux.structured(
-            "Describe an inverter.", provider="ollama", model="my-model", response_model=Summary
+            prompt="Describe an inverter.",
+            json_schema=schema,
+            provider="ollama",
+            model="qwen3:4b",
+            think=False,
         ).parsed
     )

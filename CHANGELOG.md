@@ -4,12 +4,23 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-29
+
 ### Added
 
 - Named project model profiles, selectable globally or per request, with exact
   provider/model routes by task.
 - Pre-execution installed-model validation, enabled by default, raising
   `ModelNotFoundError` before a provider request is made.
+- Optional typed `think` control for structured-output requests.
+
+### Fixed
+
+- Ollama structured requests now send `think` at the `/api/generate` payload
+  root, allowing Qwen3 models to return schema-constrained JSON in `response`
+  when reasoning is disabled.
+- Example model profiles now use the exact installed
+  `nomic-embed-text:latest` tag.
 
 ## [0.2.0] - 2026-07-27
 

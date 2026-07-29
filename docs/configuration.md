@@ -32,7 +32,7 @@ structured_output = { provider = "ollama", model = "qwen3:4b" }
 [routing.profiles.balanced]
 chat = { provider = "ollama", model = "qwen3:4b" }
 vision = { provider = "ollama", model = "gemma3:4b" }
-embedding = { provider = "ollama", model = "nomic-embed-text" }
+embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
 ```
 
 With `validate_model_availability = true` (the default), CortexMux calls the

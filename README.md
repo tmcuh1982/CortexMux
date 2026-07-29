@@ -8,7 +8,7 @@
 
 CortexMux is a modular, local-first Python library for routing AI tasks across
 language models, vision models, ComfyUI image workflows, and deterministic
-data-analysis engines. Version 0.2.0 is an alpha-quality stable release: its public
+data-analysis engines. Version 0.3.0 is an alpha-quality stable release: its public
 surface is tested, but production deployments should pin the patch version.
 
 ## Features
@@ -66,6 +66,27 @@ programs. Calling a synchronous method from a running event loop is rejected.
 
 Structured output accepts `response_model=YourPydanticModel`. Vision accepts a
 path, bytes, or validated base64. Embeddings accept one string or a list.
+
+Ollama reasoning models such as Qwen3 can disable reasoning for reliable
+schema-constrained JSON. CortexMux sends `think` at the `/api/generate` payload
+root, separately from generation options:
+
+```python
+schema = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}},
+    "required": ["answer"],
+}
+
+with CortexMux.from_env() as mux:
+    response = mux.structured(
+        prompt="Return a concise answer.",
+        json_schema=schema,
+        provider="ollama",
+        model="qwen3:4b",
+        think=False,
+    )
+```
 
 ## ComfyUI
 

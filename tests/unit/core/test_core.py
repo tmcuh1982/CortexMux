@@ -175,6 +175,18 @@ def test_configuration_precedence_and_empty_models(tmp_path: Path) -> None:
     assert config.config_path == path
 
 
+def test_example_model_profiles_use_exact_installed_tags() -> None:
+    config_path = Path(__file__).resolve().parents[3] / "configs" / "cortexmux.example.toml"
+    config = CortexMuxConfig.load(path=config_path)
+    fast = config.routing.profile_for("fast")
+    balanced = config.routing.profile_for("balanced")
+
+    assert fast is not None and fast.embedding is not None
+    assert balanced is not None and balanced.embedding is not None
+    assert fast.embedding.model == "nomic-embed-text:latest"
+    assert balanced.embedding.model == "nomic-embed-text:latest"
+
+
 def test_web_environment_configuration() -> None:
     config = CortexMuxConfig.load(
         environ={

@@ -252,6 +252,7 @@ class CortexMux:
         model: str | None = None,
         model_profile: str | None = None,
         system: str | None = None,
+        think: bool | None = None,
     ) -> StructuredResponse:
         """Generate and validate structured JSON asynchronously."""
         schema = response_model.model_json_schema() if response_model else json_schema
@@ -265,6 +266,7 @@ class CortexMux:
                     model_profile=model_profile,
                     json_schema=schema,
                     system=system,
+                    think=think,
                 )
             ),
         )
@@ -282,6 +284,7 @@ class CortexMux:
         model: str | None = None,
         model_profile: str | None = None,
         system: str | None = None,
+        think: bool | None = None,
     ) -> StructuredResponse:
         """Generate and validate structured JSON synchronously."""
         return self._sync(
@@ -293,6 +296,7 @@ class CortexMux:
                 model=model,
                 model_profile=model_profile,
                 system=system,
+                think=think,
             )
         )
 

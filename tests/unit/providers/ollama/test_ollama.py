@@ -119,6 +119,30 @@ async def test_structured_success_and_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_omits_unspecified_think_and_preserves_options() -> None:
+    bodies: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"response": '{"name":"ok"}'})
+
+    provider = provider_for(httpx.MockTransport(handler))
+    response = await provider.execute(
+        StructuredOutputRequest(
+            provider="ollama",
+            model="m",
+            prompt="hello",
+            options={"temperature": 0.1},
+        )
+    )
+
+    assert response.parsed == {"name": "ok"}
+    assert "think" not in bodies[0]
+    assert bodies[0]["options"] == {"temperature": 0.1}
+    await provider.close()
+
+
+@pytest.mark.asyncio
 async def test_vision_encodes_bytes_and_path(tmp_path: Path) -> None:
     image = tmp_path / "image.bin"
     image.write_bytes(b"abc")
