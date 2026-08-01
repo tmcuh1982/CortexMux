@@ -4,6 +4,8 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-01
+
 ### Added
 
 - Typed synchronous and asynchronous structured-output streaming for Ollama,
