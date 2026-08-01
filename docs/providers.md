@@ -11,5 +11,15 @@ Ollama uses `/api/version`, `/api/tags`, `/api/generate`, `/api/chat`, and
 reusable workflow catalogs and normalized progress callbacks without adding
 ComfyUI-specific behavior to the router.
 
+Structured Ollama generation supports both validated non-streaming responses
+and typed streaming. `astream_structured()` and `stream_structured()` send the
+JSON Schema as `format`, set `stream` to `true`, and send `think` at the payload
+root when specified. Each `StructuredStreamChunk` is an unvalidated display-only
+fragment. CortexMux concatenates all fragments after Ollama's completion marker,
+parses the complete JSON, applies the same schema validation used by the
+non-streaming API, and only then emits `StructuredStreamCompleted`. Premature
+stream termination and final validation failure raise typed CortexMux errors;
+no partial fragment is represented as validated application data.
+
 Custom providers subclass `BaseProvider` and can be registered through
 `mux.register_provider(provider)`.

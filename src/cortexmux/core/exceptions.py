@@ -60,6 +60,10 @@ class StructuredOutputValidationError(CortexMuxError):
     """Structured model output failed validation."""
 
 
+class StructuredStreamInterruptedError(ProviderResponseError):
+    """A structured provider stream ended before its completion marker."""
+
+
 class WorkflowValidationError(CortexMuxError):
     """A ComfyUI workflow or binding is invalid."""
 

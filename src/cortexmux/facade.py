@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Coroutine
+from collections.abc import AsyncGenerator, Coroutine, Iterator
 from pathlib import Path
 from types import TracebackType
 from typing import Any, TypeVar, cast
@@ -12,7 +12,11 @@ from typing import Any, TypeVar, cast
 from pydantic import BaseModel
 
 from cortexmux.core.config import CortexMuxConfig
-from cortexmux.core.exceptions import InvalidRequestError
+from cortexmux.core.exceptions import (
+    InvalidRequestError,
+    ProviderResponseError,
+    StructuredOutputValidationError,
+)
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
 from cortexmux.core.security import validate_provider_url
@@ -46,6 +50,9 @@ from cortexmux.schemas.responses import (
     EmbeddingResponse,
     ImageGenerationResponse,
     StructuredResponse,
+    StructuredStreamChunk,
+    StructuredStreamCompleted,
+    StructuredStreamEvent,
     TextResponse,
     VisionResponse,
 )
@@ -299,6 +306,78 @@ class CortexMux:
                 think=think,
             )
         )
+
+    async def astream_structured(
+        self,
+        prompt: str,
+        *,
+        response_model: type[ModelT] | None = None,
+        json_schema: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        system: str | None = None,
+        think: bool | None = None,
+    ) -> AsyncGenerator[StructuredStreamEvent, None]:
+        """Stream draft JSON fragments, then emit one fully validated result."""
+        schema = response_model.model_json_schema() if response_model else json_schema
+        request = StructuredOutputRequest(
+            prompt=prompt,
+            provider=provider,
+            model=model,
+            model_profile=model_profile,
+            json_schema=schema,
+            system=system,
+            think=think,
+        )
+        async for event in self.router.stream(request):
+            if isinstance(event, StructuredStreamChunk):
+                yield event
+                continue
+            if not isinstance(event, StructuredStreamCompleted):
+                raise ProviderResponseError(
+                    "Provider returned an invalid structured stream event.",
+                    provider=event.provider,
+                    request_id=event.request_id,
+                )
+            if response_model is not None:
+                try:
+                    parsed = response_model.model_validate(event.parsed)
+                except ValueError as exc:
+                    raise StructuredOutputValidationError(
+                        "The completed structured output does not match the response model.",
+                        provider=event.provider,
+                        request_id=event.request_id,
+                        safe_excerpt=_safe_excerpt(event.content),
+                    ) from exc
+                event = event.model_copy(update={"parsed": parsed})
+            yield event
+
+    def stream_structured(
+        self,
+        prompt: str,
+        *,
+        response_model: type[ModelT] | None = None,
+        json_schema: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        system: str | None = None,
+        think: bool | None = None,
+    ) -> Iterator[StructuredStreamEvent]:
+        """Synchronously stream draft JSON fragments and one validated result."""
+        self._ensure_sync_context()
+        stream = self.astream_structured(
+            prompt,
+            response_model=response_model,
+            json_schema=json_schema,
+            provider=provider,
+            model=model,
+            model_profile=model_profile,
+            system=system,
+            think=think,
+        )
+        return self._iterate_sync_stream(stream)
 
     async def avision(
         self,
@@ -649,18 +728,37 @@ class CortexMux:
             self._sync_runner = None
 
     def _sync(self, awaitable: Coroutine[Any, Any, SyncT]) -> SyncT:
+        self._ensure_sync_context(awaitable)
+        if self._sync_runner is None:
+            self._sync_runner = asyncio.Runner()
+        return self._sync_runner.run(awaitable)
+
+    def _ensure_sync_context(self, awaitable: Coroutine[Any, Any, Any] | None = None) -> None:
+        """Reject synchronous facade calls from an already running event loop."""
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            if self._sync_runner is None:
-                self._sync_runner = asyncio.Runner()
-            return self._sync_runner.run(awaitable)
-        if hasattr(awaitable, "close"):
+            return
+        if awaitable is not None:
             awaitable.close()
         raise InvalidRequestError(
             "Synchronous CortexMux APIs cannot run inside an active event loop; "
             "use the corresponding async method."
         )
+
+    def _iterate_sync_stream(
+        self,
+        stream: AsyncGenerator[StructuredStreamEvent, None],
+    ) -> Iterator[StructuredStreamEvent]:
+        """Adapt one async generator to the facade's shared synchronous runner."""
+        try:
+            while True:
+                try:
+                    yield self._sync(_next_stream_event(stream))
+                except StopAsyncIteration:
+                    return
+        finally:
+            self._sync(_close_stream(stream))
 
     async def __aenter__(self) -> CortexMux:
         """Enter an asynchronous facade context."""
@@ -707,6 +805,23 @@ def _request_for(task: TaskType | str, fields: dict[str, Any]) -> CortexRequest:
         return classes[task_type].model_validate({"task": task_type, **fields})
     except ValueError as exc:
         raise InvalidRequestError("Request validation failed.", task=task_type.value) from exc
+
+
+async def _next_stream_event(
+    stream: AsyncGenerator[StructuredStreamEvent, None],
+) -> StructuredStreamEvent:
+    """Return the next structured stream event as a coroutine for asyncio.Runner."""
+    return await anext(stream)
+
+
+async def _close_stream(stream: AsyncGenerator[StructuredStreamEvent, None]) -> None:
+    """Close a structured async stream after exhaustion or early consumer exit."""
+    await stream.aclose()
+
+
+def _safe_excerpt(content: str, limit: int = 200) -> str:
+    """Return a bounded single-line excerpt without control characters."""
+    return "".join(character if character.isprintable() else " " for character in content[:limit])
 
 
 def _web_extraction_prompt(

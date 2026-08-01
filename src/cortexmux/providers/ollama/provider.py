@@ -16,6 +16,7 @@ from cortexmux.core.exceptions import (
     InvalidRequestError,
     ProviderResponseError,
     StructuredOutputValidationError,
+    StructuredStreamInterruptedError,
     UnsupportedTaskError,
 )
 from cortexmux.core.types import TaskType
@@ -36,7 +37,11 @@ from cortexmux.schemas.responses import (
     CortexResponse,
     EmbeddingResponse,
     StreamChunk,
+    StreamEvent,
     StructuredResponse,
+    StructuredStreamChunk,
+    StructuredStreamCompleted,
+    StructuredStreamEvent,
     TextResponse,
     VisionResponse,
 )
@@ -137,18 +142,27 @@ class OllamaProvider(BaseProvider):
             task=request.task.value,
         )
 
-    async def stream(
-        self, request: TextGenerationRequest | ChatRequest
-    ) -> AsyncIterator[StreamChunk]:
+    async def stream(self, request: CortexRequest) -> AsyncIterator[StreamEvent]:
         """Yield incremental normalized stream chunks."""
         if not request.model:
             raise InvalidRequestError("Ollama streaming requires a model.")
+        if isinstance(request, StructuredOutputRequest):
+            async for event in self._stream_structured(request):
+                yield event
+            return
         if isinstance(request, TextGenerationRequest):
             path = OllamaClient.GENERATE
             payload = self._generation_payload(request)
-        else:
+        elif isinstance(request, ChatRequest):
             path = OllamaClient.CHAT
             payload = self._chat_payload(request)
+        else:
+            raise UnsupportedTaskError(
+                "Ollama does not implement streaming for this request type.",
+                provider=self.name,
+                task=request.task.value,
+                request_id=request.request_id,
+            )
         payload["stream"] = True
         async with self.client.stream(path, payload, request_id=request.request_id) as items:
             async for item in items:
@@ -166,6 +180,58 @@ class OllamaProvider(BaseProvider):
                     done=bool(item.get("done", False)),
                     usage=usage_from_ollama(item),
                 )
+
+    async def _stream_structured(
+        self, request: StructuredOutputRequest
+    ) -> AsyncIterator[StructuredStreamEvent]:
+        """Stream draft fragments and emit a validated final structured result."""
+        payload = self._structured_payload(request, stream=True)
+        fragments: list[str] = []
+        async with self.client.stream(
+            OllamaClient.GENERATE,
+            payload,
+            request_id=request.request_id,
+        ) as items:
+            async for item in items:
+                if item.get("error") is not None:
+                    raise ProviderResponseError(
+                        "Ollama returned an error during structured streaming.",
+                        provider=self.name,
+                        request_id=request.request_id,
+                    )
+                content = item.get("response", "")
+                if not isinstance(content, str):
+                    raise ProviderResponseError(
+                        "Ollama structured stream contained invalid text.",
+                        provider=self.name,
+                        request_id=request.request_id,
+                    )
+                if content:
+                    fragments.append(content)
+                    yield StructuredStreamChunk(
+                        request_id=request.request_id,
+                        provider=self.name,
+                        model=request.model,
+                        content=content,
+                    )
+                if bool(item.get("done", False)):
+                    complete_content = "".join(fragments)
+                    parsed = self._parse_structured_content(request, complete_content)
+                    yield StructuredStreamCompleted(
+                        request_id=request.request_id,
+                        provider=self.name,
+                        model=request.model,
+                        content=complete_content,
+                        parsed=parsed,
+                        usage=usage_from_ollama(item),
+                    )
+                    return
+        raise StructuredStreamInterruptedError(
+            "Ollama structured stream ended before completion.",
+            provider=self.name,
+            model=request.model,
+            request_id=request.request_id,
+        )
 
     async def _generate(self, request: TextGenerationRequest) -> TextResponse:
         data = await self.client.post(
@@ -202,10 +268,27 @@ class OllamaProvider(BaseProvider):
         )
 
     async def _structured(self, request: StructuredOutputRequest) -> StructuredResponse:
+        payload = self._structured_payload(request, stream=False)
+        data = await self.client.post(OllamaClient.GENERATE, payload, request_id=request.request_id)
+        content = _required_string(data, "response", request.request_id)
+        parsed = self._parse_structured_content(request, content)
+        return StructuredResponse(
+            provider=self.name,
+            model=request.model,
+            request_id=request.request_id,
+            content=content,
+            parsed=parsed,
+            usage=usage_from_ollama(data),
+        )
+
+    def _structured_payload(
+        self, request: StructuredOutputRequest, *, stream: bool
+    ) -> dict[str, Any]:
+        """Build an Ollama structured-output payload for either execution mode."""
         payload: dict[str, Any] = {
             "model": request.model,
             "prompt": request.prompt,
-            "stream": False,
+            "stream": stream,
             "format": request.json_schema or "json",
         }
         if request.system:
@@ -213,8 +296,10 @@ class OllamaProvider(BaseProvider):
         if request.think is not None:
             payload["think"] = request.think
         payload["options"] = request.options
-        data = await self.client.post(OllamaClient.GENERATE, payload, request_id=request.request_id)
-        content = _required_string(data, "response", request.request_id)
+        return payload
+
+    def _parse_structured_content(self, request: StructuredOutputRequest, content: str) -> Any:
+        """Parse and validate one complete structured output."""
         try:
             parsed = json.loads(content)
             if request.json_schema:
@@ -224,16 +309,9 @@ class OllamaProvider(BaseProvider):
                 "Ollama returned invalid structured output.",
                 provider=self.name,
                 request_id=request.request_id,
-                safe_excerpt=content[:200],
+                safe_excerpt=_safe_excerpt(content),
             ) from exc
-        return StructuredResponse(
-            provider=self.name,
-            model=request.model,
-            request_id=request.request_id,
-            content=content,
-            parsed=parsed,
-            usage=usage_from_ollama(data),
-        )
+        return parsed
 
     async def _vision(self, request: VisionRequest) -> VisionResponse:
         images = [_encode_image(value, request.max_image_size_mb) for value in request.images]
@@ -318,6 +396,11 @@ def _required_string(data: dict[str, Any], key: str, request_id: str) -> str:
             "Ollama response is missing expected text.", request_id=request_id, field=key
         )
     return value
+
+
+def _safe_excerpt(content: str, limit: int = 200) -> str:
+    """Return a bounded single-line excerpt without control characters."""
+    return "".join(character if character.isprintable() else " " for character in content[:limit])
 
 
 def _parse_datetime(value: object) -> datetime | None:

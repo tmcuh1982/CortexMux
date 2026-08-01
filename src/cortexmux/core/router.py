@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from time import perf_counter
 
@@ -12,7 +13,7 @@ from cortexmux.providers.base import BaseProvider
 from cortexmux.schemas.common import RoutingMetadata
 from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import CortexRequest
-from cortexmux.schemas.responses import CortexResponse
+from cortexmux.schemas.responses import CortexResponse, StreamEvent
 
 
 class Router:
@@ -112,6 +113,14 @@ class Router:
             request_id=request.request_id,
         )
         return response
+
+    async def stream(self, request: CortexRequest) -> AsyncIterator[StreamEvent]:
+        """Select a provider/model and stream a normalized request."""
+        provider, model, _reason = self.select(request)
+        await self._ensure_model_is_available(provider, model, request)
+        selected_request = request.model_copy(update={"provider": provider.name, "model": model})
+        async for event in provider.stream(selected_request):
+            yield event
 
     @staticmethod
     def _ensure_support(provider: BaseProvider, request: CortexRequest, model: str | None) -> None:

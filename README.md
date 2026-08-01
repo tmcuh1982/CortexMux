@@ -88,6 +88,55 @@ with CortexMux.from_env() as mux:
     )
 ```
 
+Structured output can also be streamed as an explicitly unvalidated draft. Do
+not parse or use `StructuredStreamChunk.content` as application data. CortexMux
+concatenates the fragments and emits `StructuredStreamCompleted` only after the
+complete JSON has passed parsing and JSON Schema validation:
+
+```python
+import asyncio
+import json
+
+from cortexmux import CortexMux
+from cortexmux.schemas import StructuredStreamChunk, StructuredStreamCompleted
+
+
+async def main() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["answer", "confidence"],
+    }
+    draft = ""
+
+    async with CortexMux.from_env() as mux:
+        async for event in mux.astream_structured(
+            prompt="Answer concisely and estimate confidence.",
+            json_schema=schema,
+            provider="ollama",
+            model="ministral-3:8b",
+            think=False,
+        ):
+            if isinstance(event, StructuredStreamChunk):
+                draft += event.content
+                print(f"\rDraft (unvalidated): {draft}", end="", flush=True)
+            elif isinstance(event, StructuredStreamCompleted):
+                print("\r" + " " * (len(draft) + 21), end="\r")
+                print("Validated:", json.dumps(event.parsed, ensure_ascii=False))
+
+
+asyncio.run(main())
+```
+
+For synchronous applications, iterate over `mux.stream_structured(...)` with
+the same event types. A premature stream end raises
+`StructuredStreamInterruptedError`; invalid final JSON or schema mismatch
+raises `StructuredOutputValidationError`. Existing `structured()` and
+`astructured()` calls remain non-streaming.
+
 ## ComfyUI
 
 ComfyUI workflows must be exported in **API format**, not the browser save

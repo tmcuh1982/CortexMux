@@ -4,6 +4,12 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Typed synchronous and asynchronous structured-output streaming for Ollama,
+  with draft-only chunks, schema-validated completion events, usage metadata,
+  explicit interrupted-stream errors, and root-level `think` control.
+
 ## [0.3.0] - 2026-07-29
 
 ### Added

@@ -96,3 +96,29 @@ class StreamChunk(BaseModel):
     done: bool = False
     usage: UsageMetadata | None = None
     raw_metadata: dict[str, Any] | None = None
+
+
+class StructuredStreamChunk(BaseModel):
+    """An unvalidated structured-output text fragment for draft display only."""
+
+    event: Literal["chunk"] = "chunk"
+    request_id: str
+    provider: str
+    model: str | None = None
+    content: str
+
+
+class StructuredStreamCompleted(BaseModel):
+    """A complete structured output emitted only after final validation."""
+
+    event: Literal["completed"] = "completed"
+    request_id: str
+    provider: str
+    model: str | None = None
+    content: str
+    parsed: Any
+    usage: UsageMetadata | None = None
+
+
+StructuredStreamEvent = StructuredStreamChunk | StructuredStreamCompleted
+StreamEvent = StreamChunk | StructuredStreamEvent

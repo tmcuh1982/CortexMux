@@ -13,6 +13,7 @@ from cortexmux.core.exceptions import (
     ModelNotFoundError,
     ProviderResponseError,
     StructuredOutputValidationError,
+    StructuredStreamInterruptedError,
 )
 from cortexmux.core.types import MessageRole
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
@@ -24,6 +25,7 @@ from cortexmux.schemas.requests import (
     TextGenerationRequest,
     VisionRequest,
 )
+from cortexmux.schemas.responses import StructuredStreamChunk, StructuredStreamCompleted
 
 
 def provider_for(handler: httpx.MockTransport) -> OllamaProvider:
@@ -137,8 +139,121 @@ async def test_structured_omits_unspecified_think_and_preserves_options() -> Non
     )
 
     assert response.parsed == {"name": "ok"}
+    assert bodies[0]["stream"] is False
+    assert bodies[0]["format"] == "json"
     assert "think" not in bodies[0]
     assert bodies[0]["options"] == {"temperature": 0.1}
+    await provider.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["ministral-3:8b", "qwen3:4b"])
+async def test_structured_stream_payload_fragments_and_validated_completion(
+    model: str,
+) -> None:
+    bodies: list[dict[str, object]] = []
+    stream = (
+        b'{"response":"{\\"name\\":","done":false}\n'
+        b'{"response":"\\"ok\\"","done":false}\n'
+        b'{"response":"}","done":true,"prompt_eval_count":2,"eval_count":3}\n'
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=stream)
+
+    provider = provider_for(httpx.MockTransport(handler))
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+    events = [
+        event
+        async for event in provider.stream(
+            StructuredOutputRequest(
+                provider="ollama",
+                model=model,
+                prompt="Return a name.",
+                json_schema=schema,
+                think=False,
+            )
+        )
+    ]
+
+    assert bodies == [
+        {
+            "model": model,
+            "prompt": "Return a name.",
+            "stream": True,
+            "format": schema,
+            "think": False,
+            "options": {},
+        }
+    ]
+    chunks = [event for event in events if isinstance(event, StructuredStreamChunk)]
+    assert [chunk.content for chunk in chunks] == ['{"name":', '"ok"', "}"]
+    completed = events[-1]
+    assert isinstance(completed, StructuredStreamCompleted)
+    assert completed.content == '{"name":"ok"}'
+    assert completed.parsed == {"name": "ok"}
+    assert completed.provider == "ollama"
+    assert completed.model == model
+    assert completed.request_id
+    assert completed.usage is not None
+    assert completed.usage.total_tokens == 5
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_structured_stream_rejects_invalid_final_json_with_safe_excerpt() -> None:
+    stream = b'{"response":"{\\"wrong\\":true}","done":true}\n'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream)
+
+    provider = provider_for(httpx.MockTransport(handler))
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+    seen: list[object] = []
+    with pytest.raises(StructuredOutputValidationError) as error:
+        async for event in provider.stream(
+            StructuredOutputRequest(
+                provider="ollama",
+                model="ministral-3:8b",
+                prompt="Return a name.",
+                json_schema=schema,
+            )
+        ):
+            seen.append(event)
+
+    assert len(seen) == 1
+    assert isinstance(seen[0], StructuredStreamChunk)
+    assert len(str(error.value.context["safe_excerpt"])) <= 200
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_structured_stream_requires_ollama_completion_marker() -> None:
+    stream = b'{"response":"{\\"name\\":","done":false}\n'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream)
+
+    provider = provider_for(httpx.MockTransport(handler))
+    with pytest.raises(StructuredStreamInterruptedError):
+        async for _ in provider.stream(
+            StructuredOutputRequest(
+                provider="ollama",
+                model="qwen3:4b",
+                prompt="Return a name.",
+                think=False,
+            )
+        ):
+            pass
     await provider.close()
 
 

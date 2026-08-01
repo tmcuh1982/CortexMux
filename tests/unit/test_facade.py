@@ -28,6 +28,8 @@ from cortexmux.schemas.responses import (
     EmbeddingResponse,
     ImageGenerationResponse,
     StructuredResponse,
+    StructuredStreamChunk,
+    StructuredStreamCompleted,
     TextResponse,
     VisionResponse,
 )
@@ -304,3 +306,87 @@ def test_structured_ollama_think_is_sent_at_payload_root() -> None:
     assert response.parsed == {"name": "ok"}
     assert bodies[0]["think"] is False
     assert "think" not in bodies[0]["options"]
+
+
+@pytest.mark.asyncio
+async def test_async_structured_stream_exposes_draft_then_validated_result() -> None:
+    stream = (
+        b'{"response":"{\\"answer\\":","done":false}\n'
+        b'{"response":"42}","done":true,"prompt_eval_count":4,"eval_count":2}\n'
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream)
+
+    client = httpx.AsyncClient(
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+    config = CortexMuxConfig.model_validate({"routing": {"validate_model_availability": False}})
+    mux = CortexMux(config, register_builtin_providers=False)
+    mux.register_provider(
+        OllamaProvider(OllamaClient("http://localhost:11434", timeout=2, client=client))
+    )
+
+    async with mux:
+        events = [
+            event
+            async for event in mux.astream_structured(
+                prompt="Return the answer.",
+                json_schema={
+                    "type": "object",
+                    "properties": {"answer": {"type": "integer"}},
+                    "required": ["answer"],
+                },
+                provider="ollama",
+                model="ministral-3:8b",
+                think=False,
+            )
+        ]
+
+    assert isinstance(events[0], StructuredStreamChunk)
+    assert events[0].content == '{"answer":'
+    assert isinstance(events[1], StructuredStreamChunk)
+    assert events[1].content == "42}"
+    assert isinstance(events[2], StructuredStreamCompleted)
+    assert events[2].content == '{"answer":42}'
+    assert events[2].parsed == {"answer": 42}
+    assert events[2].usage is not None and events[2].usage.total_tokens == 6
+    await client.aclose()
+
+
+def test_sync_structured_stream_uses_shared_runner() -> None:
+    stream = b'{"response":"{\\"answer\\":","done":false}\n{"response":"42}","done":true}\n'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream)
+
+    client = httpx.AsyncClient(
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+    config = CortexMuxConfig.model_validate({"routing": {"validate_model_availability": False}})
+    mux = CortexMux(config, register_builtin_providers=False)
+    mux.register_provider(
+        OllamaProvider(OllamaClient("http://localhost:11434", timeout=2, client=client))
+    )
+
+    with mux:
+        events = list(
+            mux.stream_structured(
+                prompt="Return the answer.",
+                json_schema={
+                    "type": "object",
+                    "properties": {"answer": {"type": "integer"}},
+                    "required": ["answer"],
+                },
+                provider="ollama",
+                model="qwen3:4b",
+                think=False,
+            )
+        )
+
+    assert [event.event for event in events] == ["chunk", "chunk", "completed"]
+    completed = events[-1]
+    assert isinstance(completed, StructuredStreamCompleted)
+    assert completed.parsed == {"answer": 42}
