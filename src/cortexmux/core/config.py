@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 
 from cortexmux.core.exceptions import ConfigurationError
 from cortexmux.core.types import TaskType
+from cortexmux.mcp.schemas import MCPServerConfig
 
 
 class CoreConfig(BaseModel):
@@ -66,6 +67,23 @@ class ComfyUIConfig(BaseModel):
     def empty_workflow_is_unset(cls, value: object) -> object:
         """Treat an empty workflow setting as absent."""
         return None if value == "" else value
+
+
+class CapitalForgeMCPConfig(MCPServerConfig):
+    """Opt-in configuration for CapitalForge's local read-only MCP process."""
+
+    @model_validator(mode="after")
+    def enabled_server_requires_command(self) -> CapitalForgeMCPConfig:
+        """Require an explicit executable when the integration is enabled."""
+        if self.enabled and self.command is None:
+            raise ValueError("mcp.capitalforge.command is required when enabled")
+        return self
+
+
+class MCPConfig(BaseModel):
+    """Local MCP integrations kept independent from individual providers."""
+
+    capitalforge: CapitalForgeMCPConfig = Field(default_factory=CapitalForgeMCPConfig)
 
 
 class ProvidersConfig(BaseModel):
@@ -196,6 +214,7 @@ class CortexMuxConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
     config_path: Path | None = Field(default=None, exclude=True)
 
     def model_for(self, task: TaskType, provider: str) -> str | None:

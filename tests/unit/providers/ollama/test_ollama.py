@@ -10,12 +10,14 @@ import pytest
 
 from cortexmux.core.exceptions import (
     InvalidRequestError,
+    MCPToolNotAllowedError,
     ModelNotFoundError,
     ProviderResponseError,
     StructuredOutputValidationError,
     StructuredStreamInterruptedError,
 )
 from cortexmux.core.types import MessageRole
+from cortexmux.mcp import MCPTool, MCPToolResult
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
 from cortexmux.schemas.common import ChatMessage
 from cortexmux.schemas.requests import (
@@ -32,6 +34,169 @@ def provider_for(handler: httpx.MockTransport) -> OllamaProvider:
     """Create a provider backed by one mock transport."""
     http_client = httpx.AsyncClient(base_url="http://localhost:11434", transport=handler)
     return OllamaProvider(OllamaClient("http://localhost:11434", timeout=10, client=http_client))
+
+
+class CapitalForgeMCPDouble:
+    """In-memory read-only MCP double for native Ollama tool-loop tests."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def list_tools(self) -> list[MCPTool]:
+        """Return only the five documented read tools."""
+        return [
+            MCPTool(
+                name=name,
+                description=f"Read {name}",
+                input_schema={"type": "object", "properties": {}},
+            )
+            for name in (
+                "capitalforge_source_catalog",
+                "capitalforge_portfolio_summary",
+                "capitalforge_positions",
+                "capitalforge_zonebourse_signals",
+                "capitalforge_public_signals",
+            )
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> MCPToolResult:
+        """Record the server-bound arguments without receiving chat history."""
+        self.calls.append((name, arguments))
+        return MCPToolResult(
+            tool_name=name,
+            data={"source": name, "as_of": "2026-08-07", "notice": "Lecture seule."},
+        )
+
+    async def close(self) -> None:
+        """Satisfy the provider cleanup contract."""
+
+
+@pytest.mark.asyncio
+async def test_capitalforge_tool_loop_uses_french_policy_and_bounded_read_context() -> None:
+    """Give Ollama only safe tools, never a raw history or a mutation capability."""
+    double = CapitalForgeMCPDouble()
+    responses = iter(
+        [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "capitalforge_source_catalog", "arguments": {}}},
+                        {"function": {"name": "capitalforge_portfolio_summary", "arguments": {}}},
+                    ],
+                }
+            },
+            {"message": {"role": "assistant", "content": "Voici une synthèse locale."}},
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["messages"][0]["role"] == "system"
+        assert "French for French" in body["messages"][0]["content"]
+        assert {item["function"]["name"] for item in body["tools"]} == {
+            "capitalforge_source_catalog",
+            "capitalforge_portfolio_summary",
+            "capitalforge_positions",
+            "capitalforge_zonebourse_signals",
+            "capitalforge_public_signals",
+        }
+        assert "HISTORY_SECRET_MARKER" not in json.dumps(body.get("messages", [])[0])
+        return httpx.Response(200, json=next(responses))
+
+    http_client = httpx.AsyncClient(
+        base_url="http://localhost:11434", transport=httpx.MockTransport(handler)
+    )
+    provider = OllamaProvider(
+        OllamaClient("http://localhost:11434", timeout=10, client=http_client),
+        capitalforge_mcp=double,  # type: ignore[arg-type]
+    )
+    response = await provider.chat_with_capitalforge(
+        ChatRequest(
+            provider="ollama",
+            model="qwen3:4b",
+            messages=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content="Fais une analyse générale. HISTORY_SECRET_MARKER",
+                )
+            ],
+        )
+    )
+    assert response.content == "Voici une synthèse locale."
+    assert double.calls == [
+        ("capitalforge_source_catalog", {}),
+        ("capitalforge_portfolio_summary", {}),
+    ]
+    assert "HISTORY_SECRET_MARKER" not in repr(double.calls)
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_capitalforge_tool_loop_rejects_more_than_eight_calls() -> None:
+    """Refuse a model-driven tool loop before a ninth read reaches the server."""
+    double = CapitalForgeMCPDouble()
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "capitalforge_source_catalog", "arguments": {}}},
+                        {"function": {"name": "capitalforge_portfolio_summary", "arguments": {}}},
+                        {"function": {"name": "capitalforge_positions", "arguments": {"limit": 1}}},
+                        {"function": {"name": "capitalforge_positions", "arguments": {"limit": 2}}},
+                        {"function": {"name": "capitalforge_positions", "arguments": {"limit": 3}}},
+                        {
+                            "function": {
+                                "name": "capitalforge_public_signals",
+                                "arguments": {"limit": 1},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "capitalforge_public_signals",
+                                "arguments": {"limit": 2},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "capitalforge_public_signals",
+                                "arguments": {"limit": 3},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "capitalforge_zonebourse_signals",
+                                "arguments": {"market": "usa"},
+                            }
+                        },
+                    ],
+                }
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="http://localhost:11434", transport=httpx.MockTransport(handler)
+    )
+    provider = OllamaProvider(
+        OllamaClient("http://localhost:11434", timeout=10, client=http_client),
+        capitalforge_mcp=double,  # type: ignore[arg-type]
+    )
+    with pytest.raises(MCPToolNotAllowedError, match="eight"):
+        await provider.chat_with_capitalforge(
+            ChatRequest(
+                provider="ollama",
+                model="qwen3:4b",
+                messages=[ChatMessage(role=MessageRole.USER, content="Analyse.")],
+            )
+        )
+    assert len(double.calls) == 8
+    await provider.close()
 
 
 @pytest.mark.asyncio

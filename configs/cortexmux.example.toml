@@ -26,6 +26,20 @@ workflow_dir = "./workflows"
 default_workflow = ""
 model_folders = ["checkpoints"]
 
+# Separate local application, launched only on an explicit CapitalForge chat.
+[mcp.capitalforge]
+enabled = false
+command = "/Users/lolo/Documents/DEV/CapitalForge/.venv/bin/capitalforge"
+arguments = [
+  "mcp",
+  "/Users/lolo/Documents/DEV/CapitalForge/configs/local/capitalforge.yaml",
+  "--database",
+  "/Users/lolo/Documents/DEV/CapitalForge/capitalforge.db",
+]
+timeout_seconds = 20
+shutdown_timeout_seconds = 5
+max_result_characters = 200000
+
 # Projects may choose a named profile globally, or pass model_profile="fast"
 # on an individual request. Explicit provider/model arguments still take precedence.
 [routing]

@@ -14,12 +14,14 @@ from cortexmux.core.capabilities import ProviderCapability
 from cortexmux.core.exceptions import (
     CortexMuxError,
     InvalidRequestError,
+    MCPToolNotAllowedError,
     ProviderResponseError,
     StructuredOutputValidationError,
     StructuredStreamInterruptedError,
     UnsupportedTaskError,
 )
 from cortexmux.core.types import TaskType
+from cortexmux.mcp import MCPStdioClient, MCPTool
 from cortexmux.providers.base import BaseProvider
 from cortexmux.providers.ollama.client import OllamaClient
 from cortexmux.providers.ollama.schemas import usage_from_ollama
@@ -62,8 +64,11 @@ class OllamaProvider(BaseProvider):
 
     name = "ollama"
 
-    def __init__(self, client: OllamaClient) -> None:
+    def __init__(
+        self, client: OllamaClient, *, capitalforge_mcp: MCPStdioClient | None = None
+    ) -> None:
         self.client = client
+        self._capitalforge_mcp = capitalforge_mcp
 
     async def healthcheck(self) -> HealthStatus:
         """Check Ollama's version endpoint and convert downtime to a status."""
@@ -267,6 +272,68 @@ class OllamaProvider(BaseProvider):
             usage=usage_from_ollama(data),
         )
 
+    async def chat_with_capitalforge(self, request: ChatRequest) -> ChatResponse:
+        """Run a bounded Ollama tool loop against the read-only CapitalForge MCP client."""
+        if not request.model:
+            raise InvalidRequestError("CapitalForge chat requires an Ollama model.")
+        if self._capitalforge_mcp is None:
+            raise InvalidRequestError("CapitalForge MCP is not enabled.")
+        tools = await self._capitalforge_mcp.list_tools()
+        messages = [_capitalforge_system_message(), *self._chat_messages(request)]
+        calls = 0
+        seen_calls: set[tuple[str, str]] = set()
+        while True:
+            data = await self.client.post(
+                OllamaClient.CHAT,
+                {
+                    "model": request.model,
+                    "messages": messages,
+                    "tools": [_ollama_tool(tool) for tool in tools],
+                    "stream": False,
+                    "options": request.options,
+                },
+                request_id=request.request_id,
+            )
+            message = data.get("message")
+            if not isinstance(message, dict):
+                raise ProviderResponseError(
+                    "Ollama CapitalForge response has no message.", request_id=request.request_id
+                )
+            tool_calls = message.get("tool_calls")
+            if not tool_calls:
+                return ChatResponse(
+                    provider=self.name,
+                    model=request.model,
+                    request_id=request.request_id,
+                    content=_required_string(message, "content", request.request_id),
+                    role=str(message.get("role", "assistant")),
+                    usage=usage_from_ollama(data),
+                )
+            if not isinstance(tool_calls, list):
+                raise ProviderResponseError("Ollama returned invalid tool calls.")
+            messages.append(_safe_assistant_tool_message(message))
+            for tool_call in tool_calls:
+                calls += 1
+                if calls > 8:
+                    raise MCPToolNotAllowedError("CapitalForge chat exceeded eight tool calls.")
+                name, arguments = _parse_ollama_tool_call(tool_call)
+                fingerprint = (name, json.dumps(arguments, sort_keys=True, separators=(",", ":")))
+                if fingerprint in seen_calls:
+                    raise MCPToolNotAllowedError(
+                        "CapitalForge chat attempted a repeated tool-call loop."
+                    )
+                seen_calls.add(fingerprint)
+                result = await self._capitalforge_mcp.call_tool(name, arguments)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_name": result.tool_name,
+                        "content": json.dumps(
+                            result.data, ensure_ascii=False, separators=(",", ":")
+                        ),
+                    }
+                )
+
     async def _structured(self, request: StructuredOutputRequest) -> StructuredResponse:
         payload = self._structured_payload(request, stream=False)
         data = await self.client.post(OllamaClient.GENERATE, payload, request_id=request.request_id)
@@ -368,12 +435,7 @@ class OllamaProvider(BaseProvider):
         return payload
 
     def _chat_payload(self, request: ChatRequest) -> dict[str, Any]:
-        messages: list[dict[str, Any]] = []
-        for message in request.messages:
-            item: dict[str, Any] = {"role": message.role.value, "content": message.content}
-            if message.images:
-                item["images"] = message.images
-            messages.append(item)
+        messages = self._chat_messages(request)
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": messages,
@@ -384,9 +446,80 @@ class OllamaProvider(BaseProvider):
             payload["keep_alive"] = request.keep_alive
         return payload
 
+    def _chat_messages(self, request: ChatRequest) -> list[dict[str, Any]]:
+        """Convert neutral messages to Ollama's ordinary chat message shape."""
+        messages: list[dict[str, Any]] = []
+        for message in request.messages:
+            item: dict[str, Any] = {"role": message.role.value, "content": message.content}
+            if message.images:
+                item["images"] = message.images
+            messages.append(item)
+        return messages
+
     async def close(self) -> None:
         """Close the Ollama HTTP client."""
-        await self.client.close()
+        try:
+            await self.client.close()
+        finally:
+            if self._capitalforge_mcp is not None:
+                await self._capitalforge_mcp.close()
+
+
+def _capitalforge_system_message() -> dict[str, str]:
+    """Return safety and provenance instructions supplied to the local model."""
+    return {
+        "role": "system",
+        "content": (
+            "Use CapitalForge tools only when needed. For a general analysis, first call "
+            "capitalforge_source_catalog and capitalforge_portfolio_summary, then only "
+            "necessary sources. Reply in the user's language (French for French). Distinguish "
+            "local facts, external signals, and inferences. Cite source, date, and URL when "
+            "present. Explicitly flag absent, delayed, or partial data. An external sale of an "
+            "asset not held locally may be ignored; an external buy or increase must be called "
+            "out. Public signals are never advice or orders. Never request trades, imports, YAML "
+            "writes, candidate activation, or configuration changes."
+        ),
+    }
+
+
+def _ollama_tool(tool: MCPTool) -> dict[str, Any]:
+    """Translate a validated MCP tool descriptor to Ollama's tool format."""
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.input_schema,
+        },
+    }
+
+
+def _parse_ollama_tool_call(tool_call: object) -> tuple[str, dict[str, Any]]:
+    """Validate an Ollama function call before it crosses the MCP boundary."""
+    if not isinstance(tool_call, dict) or not isinstance(tool_call.get("function"), dict):
+        raise ProviderResponseError("Ollama returned malformed tool call.")
+    function = tool_call["function"]
+    name = function.get("name")
+    arguments = function.get("arguments", {})
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            raise ProviderResponseError("Ollama tool arguments are not JSON.") from exc
+    if not isinstance(name, str) or not isinstance(arguments, dict):
+        raise ProviderResponseError("Ollama tool call has invalid arguments.")
+    return name, arguments
+
+
+def _safe_assistant_tool_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the model fields required for the next native Ollama tool turn."""
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        raise ProviderResponseError("Ollama returned invalid tool calls.")
+    content = message.get("content", "")
+    if not isinstance(content, str):
+        raise ProviderResponseError("Ollama tool-call content is invalid.")
+    return {"role": "assistant", "content": content, "tool_calls": tool_calls}
 
 
 def _required_string(data: dict[str, Any], key: str, request_id: str) -> str:

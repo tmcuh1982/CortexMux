@@ -4,6 +4,12 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in, provider-independent CapitalForge MCP stdio client with MCP 2025
+  negotiation, bounded structured results, a five-tool read-only allowlist,
+  child-process cleanup, and native Ollama `qwen3:4b` tool-loop support.
+
 ## [0.4.0] - 2026-08-01
 
 ### Added

@@ -20,6 +20,7 @@ surface is tested, but production deployments should pin the patch version.
 - Whitelisted analysis plans and bounded structured results.
 - Independent Decimal-based verification of structured AI calculation claims.
 - Opt-in bounded web-page text and table extraction with source provenance.
+- Opt-in read-only CapitalForge MCP context for native Ollama tool calls.
 - Typed Pydantic schemas, synchronous/asynchronous APIs, Typer CLI, and TOML/env config.
 - Loopback-only network policy by default.
 
@@ -63,6 +64,11 @@ with CortexMux.from_env() as mux:
 
 Use `async with CortexMux.from_env()` and `await mux.achat(...)` in asynchronous
 programs. Calling a synchronous method from a running event loop is rejected.
+
+CapitalForge can remain a fully separate local application while Ollama reads
+its bounded portfolio context through MCP stdio. The integration is disabled by
+default and has no trading or configuration-write capability; see
+[CapitalForge MCP](docs/capitalforge-mcp.md).
 
 Structured output accepts `response_model=YourPydanticModel`. Vision accepts a
 path, bytes, or validated base64. Embeddings accept one string or a list.

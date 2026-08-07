@@ -21,6 +21,7 @@ from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
 from cortexmux.core.security import validate_provider_url
 from cortexmux.core.types import MessageRole, TaskType
+from cortexmux.mcp import MCPStdioClient
 from cortexmux.providers.base import BaseProvider
 from cortexmux.providers.comfyui import (
     ComfyUIClient,
@@ -108,7 +109,22 @@ class CortexMux:
                     key: value.get_secret_value() for key, value in ollama_settings.headers.items()
                 },
             )
-            self.registry.register(OllamaProvider(ollama_client))
+            capitalforge_mcp = None
+            capitalforge_settings = self.config.mcp.capitalforge
+            if capitalforge_settings.enabled:
+                capitalforge_mcp = MCPStdioClient(
+                    capitalforge_settings,
+                    allowed_tools=frozenset(
+                        {
+                            "capitalforge_source_catalog",
+                            "capitalforge_portfolio_summary",
+                            "capitalforge_positions",
+                            "capitalforge_zonebourse_signals",
+                            "capitalforge_public_signals",
+                        }
+                    ),
+                )
+            self.registry.register(OllamaProvider(ollama_client, capitalforge_mcp=capitalforge_mcp))
         if self.config.providers.comfyui.enabled:
             comfyui_settings = self.config.providers.comfyui
             url = validate_provider_url(
@@ -243,6 +259,56 @@ class CortexMux:
                 prompt,
                 messages=messages,
                 provider=provider,
+                model=model,
+                model_profile=model_profile,
+                **options,
+            )
+        )
+
+    async def acapitalforge_chat(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list[ChatMessage] | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
+    ) -> ChatResponse:
+        """Chat with Ollama while granting only CapitalForge's five read tools."""
+        normalized = messages or (
+            [ChatMessage(role=MessageRole.USER, content=prompt)] if prompt else None
+        )
+        if not normalized:
+            raise InvalidRequestError("capitalforge_chat requires prompt or messages")
+        request = ChatRequest(
+            messages=normalized,
+            model=model,
+            model_profile=model_profile,
+            options=options,
+        )
+        provider, selected_model, _reason = self.router.select(request)
+        if not isinstance(provider, OllamaProvider):
+            raise InvalidRequestError("CapitalForge chat requires the built-in Ollama provider.")
+        await self.router._ensure_model_is_available(provider, selected_model, request)
+        selected_request = request.model_copy(
+            update={"provider": provider.name, "model": selected_model}
+        )
+        return await provider.chat_with_capitalforge(selected_request)
+
+    def capitalforge_chat(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list[ChatMessage] | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
+    ) -> ChatResponse:
+        """Synchronously chat with Ollama and read-only CapitalForge context."""
+        return self._sync(
+            self.acapitalforge_chat(
+                prompt,
+                messages=messages,
                 model=model,
                 model_profile=model_profile,
                 **options,

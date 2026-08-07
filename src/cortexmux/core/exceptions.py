@@ -40,6 +40,10 @@ class ProviderResponseError(CortexMuxError):
     """A provider returned an invalid or failed response."""
 
 
+class MCPProtocolError(CortexMuxError):
+    """A local MCP server violated the bounded JSON-RPC protocol contract."""
+
+
 class ModelNotFoundError(CortexMuxError):
     """A requested model is unavailable."""
 
@@ -101,6 +105,10 @@ class OptionalDependencyError(CortexMuxError):
 
 class SecurityError(CortexMuxError):
     """A security policy rejected an operation."""
+
+
+class MCPToolNotAllowedError(SecurityError):
+    """An MCP tool or argument exceeded the CapitalForge read-only allowlist."""
 
 
 class RemoteHostNotAllowedError(SecurityError):

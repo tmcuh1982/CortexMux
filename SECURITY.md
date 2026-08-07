@@ -1,5 +1,14 @@
 # Security
 
+## CapitalForge MCP
+
+The CapitalForge MCP integration is opt-in and stdio-only. CortexMux launches
+the configured executable without a shell, gives it no inherited secrets, and
+never logs stdout because it carries JSON-RPC protocol data. Only five
+read-only `capitalforge_` tools are accepted; order, import, YAML-write, and
+candidate-activation capabilities do not exist in CortexMux. See
+[docs/capitalforge-mcp.md](docs/capitalforge-mcp.md) for disabling and limits.
+
 Report vulnerabilities privately through the repository's security advisory
 feature. Do not include live credentials or sensitive datasets in reports.
 

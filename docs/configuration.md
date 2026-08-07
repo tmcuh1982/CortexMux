@@ -59,3 +59,9 @@ must pass.
 Web retrieval is configured separately under `[web]`. It is disabled by
 default and does not inherit `core.allow_remote_hosts`, which controls provider
 endpoints. See [web extraction](web-extraction.md).
+
+The optional `[mcp.capitalforge]` section starts a separate local process only
+when explicitly enabled. It needs an absolute command, its fixed arguments,
+and bounded request/shutdown timeouts. It does not inherit the parent process
+environment. See [CapitalForge MCP](capitalforge-mcp.md) for the complete
+configuration and read-only safety boundary.
