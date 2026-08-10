@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from time import perf_counter
 
@@ -12,7 +13,7 @@ from cortexmux.providers.base import BaseProvider
 from cortexmux.schemas.common import RoutingMetadata
 from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import CortexRequest
-from cortexmux.schemas.responses import CortexResponse
+from cortexmux.schemas.responses import CortexResponse, StreamEvent
 
 
 class Router:
@@ -93,7 +94,7 @@ class Router:
         started_clock = perf_counter()
         provider, model, reason = self.select(request)
         await self._ensure_model_is_available(provider, model, request)
-        selected_request = request.model_copy(update={"provider": provider.name, "model": model})
+        selected_request = self._selected_request(request, provider, model, reason)
         if on_progress is None:
             response = await provider.execute(selected_request)
         else:
@@ -112,6 +113,32 @@ class Router:
             request_id=request.request_id,
         )
         return response
+
+    async def stream(self, request: CortexRequest) -> AsyncIterator[StreamEvent]:
+        """Select a provider/model and stream a normalized request."""
+        provider, model, reason = self.select(request)
+        await self._ensure_model_is_available(provider, model, request)
+        selected_request = self._selected_request(request, provider, model, reason)
+        async for event in provider.stream(selected_request):
+            yield event
+
+    def _selected_request(
+        self,
+        request: CortexRequest,
+        provider: BaseProvider,
+        model: str | None,
+        reason: str,
+    ) -> CortexRequest:
+        """Apply configured profile options without overriding explicit request options."""
+        options = request.options
+        if reason == "configured_model_profile":
+            profile = self.config.routing.profile_for(request.model_profile)
+            route = profile.route_for(request.task) if profile is not None else None
+            if route is not None:
+                options = {**route.options, **request.options}
+        return request.model_copy(
+            update={"provider": provider.name, "model": model, "options": options}
+        )
 
     @staticmethod
     def _ensure_support(provider: BaseProvider, request: CortexRequest, model: str | None) -> None:

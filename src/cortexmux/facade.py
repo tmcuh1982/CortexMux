@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Coroutine
+import os
+from collections.abc import AsyncGenerator, Coroutine, Iterator
 from pathlib import Path
 from types import TracebackType
 from typing import Any, TypeVar, cast
@@ -12,11 +13,17 @@ from typing import Any, TypeVar, cast
 from pydantic import BaseModel
 
 from cortexmux.core.config import CortexMuxConfig
-from cortexmux.core.exceptions import InvalidRequestError
+from cortexmux.core.exceptions import (
+    ConfigurationError,
+    InvalidRequestError,
+    ProviderResponseError,
+    StructuredOutputValidationError,
+)
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
 from cortexmux.core.security import validate_provider_url
 from cortexmux.core.types import MessageRole, TaskType
+from cortexmux.mcp import MCPStdioClient
 from cortexmux.providers.base import BaseProvider
 from cortexmux.providers.comfyui import (
     ComfyUIClient,
@@ -26,6 +33,7 @@ from cortexmux.providers.comfyui import (
 )
 from cortexmux.providers.data import DataAnalysisProvider, MathVerifier
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
+from cortexmux.providers.openai import OpenAIClient, OpenAIProvider
 from cortexmux.schemas.calculations import CalculationClaim, CalculationVerification
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
 from cortexmux.schemas.progress import ProgressCallback
@@ -46,9 +54,13 @@ from cortexmux.schemas.responses import (
     EmbeddingResponse,
     ImageGenerationResponse,
     StructuredResponse,
+    StructuredStreamChunk,
+    StructuredStreamCompleted,
+    StructuredStreamEvent,
     TextResponse,
     VisionResponse,
 )
+from cortexmux.selection import ModelQualifier, QualificationManifest, QualificationSuite
 from cortexmux.web import WebPage, WebPageFetcher
 
 ResponseT = TypeVar("ResponseT", bound=CortexResponse)
@@ -101,7 +113,48 @@ class CortexMux:
                     key: value.get_secret_value() for key, value in ollama_settings.headers.items()
                 },
             )
-            self.registry.register(OllamaProvider(ollama_client))
+            capitalforge_mcp = None
+            capitalforge_settings = self.config.mcp.capitalforge
+            if capitalforge_settings.enabled:
+                capitalforge_mcp = MCPStdioClient(
+                    capitalforge_settings,
+                    allowed_tools=frozenset(
+                        {
+                            "capitalforge_source_catalog",
+                            "capitalforge_portfolio_summary",
+                            "capitalforge_positions",
+                            "capitalforge_zonebourse_signals",
+                            "capitalforge_public_signals",
+                        }
+                    ),
+                )
+            self.registry.register(OllamaProvider(ollama_client, capitalforge_mcp=capitalforge_mcp))
+        if self.config.providers.openai.enabled:
+            openai_settings = self.config.providers.openai
+            url = validate_provider_url(
+                openai_settings.base_url,
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                openai_settings.api_key.get_secret_value()
+                if openai_settings.api_key is not None
+                else os.environ.get(openai_settings.api_key_env)
+            )
+            if not configured_key:
+                raise ConfigurationError(
+                    "OpenAI is enabled but its API key is unavailable.",
+                    environment_variable=openai_settings.api_key_env,
+                )
+            self.registry.register(
+                OpenAIProvider(
+                    OpenAIClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=openai_settings.timeout_seconds,
+                    )
+                )
+            )
         if self.config.providers.comfyui.enabled:
             comfyui_settings = self.config.providers.comfyui
             url = validate_provider_url(
@@ -140,6 +193,14 @@ class CortexMux:
     def register_provider(self, provider: BaseProvider, *, replace: bool = False) -> None:
         """Register a custom provider on this facade instance."""
         self.registry.register(provider, replace=replace)
+
+    async def aqualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        """Benchmark configured provider/model combinations asynchronously."""
+        return await ModelQualifier(self.registry).qualify(suite)
+
+    def qualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        """Benchmark configured provider/model combinations synchronously."""
+        return self._sync(self.aqualify_models(suite))
 
     async def arun(self, request: CortexRequest | TaskType | str, **fields: Any) -> CortexResponse:
         """Validate and execute a generic asynchronous request."""
@@ -242,6 +303,56 @@ class CortexMux:
             )
         )
 
+    async def acapitalforge_chat(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list[ChatMessage] | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
+    ) -> ChatResponse:
+        """Chat with Ollama while granting only CapitalForge's five read tools."""
+        normalized = messages or (
+            [ChatMessage(role=MessageRole.USER, content=prompt)] if prompt else None
+        )
+        if not normalized:
+            raise InvalidRequestError("capitalforge_chat requires prompt or messages")
+        request = ChatRequest(
+            messages=normalized,
+            model=model,
+            model_profile=model_profile,
+            options=options,
+        )
+        provider, selected_model, _reason = self.router.select(request)
+        if not isinstance(provider, OllamaProvider):
+            raise InvalidRequestError("CapitalForge chat requires the built-in Ollama provider.")
+        await self.router._ensure_model_is_available(provider, selected_model, request)
+        selected_request = request.model_copy(
+            update={"provider": provider.name, "model": selected_model}
+        )
+        return await provider.chat_with_capitalforge(selected_request)
+
+    def capitalforge_chat(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list[ChatMessage] | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
+    ) -> ChatResponse:
+        """Synchronously chat with Ollama and read-only CapitalForge context."""
+        return self._sync(
+            self.acapitalforge_chat(
+                prompt,
+                messages=messages,
+                model=model,
+                model_profile=model_profile,
+                **options,
+            )
+        )
+
     async def astructured(
         self,
         prompt: str,
@@ -299,6 +410,78 @@ class CortexMux:
                 think=think,
             )
         )
+
+    async def astream_structured(
+        self,
+        prompt: str,
+        *,
+        response_model: type[ModelT] | None = None,
+        json_schema: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        system: str | None = None,
+        think: bool | None = None,
+    ) -> AsyncGenerator[StructuredStreamEvent, None]:
+        """Stream draft JSON fragments, then emit one fully validated result."""
+        schema = response_model.model_json_schema() if response_model else json_schema
+        request = StructuredOutputRequest(
+            prompt=prompt,
+            provider=provider,
+            model=model,
+            model_profile=model_profile,
+            json_schema=schema,
+            system=system,
+            think=think,
+        )
+        async for event in self.router.stream(request):
+            if isinstance(event, StructuredStreamChunk):
+                yield event
+                continue
+            if not isinstance(event, StructuredStreamCompleted):
+                raise ProviderResponseError(
+                    "Provider returned an invalid structured stream event.",
+                    provider=event.provider,
+                    request_id=event.request_id,
+                )
+            if response_model is not None:
+                try:
+                    parsed = response_model.model_validate(event.parsed)
+                except ValueError as exc:
+                    raise StructuredOutputValidationError(
+                        "The completed structured output does not match the response model.",
+                        provider=event.provider,
+                        request_id=event.request_id,
+                        safe_excerpt=_safe_excerpt(event.content),
+                    ) from exc
+                event = event.model_copy(update={"parsed": parsed})
+            yield event
+
+    def stream_structured(
+        self,
+        prompt: str,
+        *,
+        response_model: type[ModelT] | None = None,
+        json_schema: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        system: str | None = None,
+        think: bool | None = None,
+    ) -> Iterator[StructuredStreamEvent]:
+        """Synchronously stream draft JSON fragments and one validated result."""
+        self._ensure_sync_context()
+        stream = self.astream_structured(
+            prompt,
+            response_model=response_model,
+            json_schema=json_schema,
+            provider=provider,
+            model=model,
+            model_profile=model_profile,
+            system=system,
+            think=think,
+        )
+        return self._iterate_sync_stream(stream)
 
     async def avision(
         self,
@@ -649,18 +832,37 @@ class CortexMux:
             self._sync_runner = None
 
     def _sync(self, awaitable: Coroutine[Any, Any, SyncT]) -> SyncT:
+        self._ensure_sync_context(awaitable)
+        if self._sync_runner is None:
+            self._sync_runner = asyncio.Runner()
+        return self._sync_runner.run(awaitable)
+
+    def _ensure_sync_context(self, awaitable: Coroutine[Any, Any, Any] | None = None) -> None:
+        """Reject synchronous facade calls from an already running event loop."""
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            if self._sync_runner is None:
-                self._sync_runner = asyncio.Runner()
-            return self._sync_runner.run(awaitable)
-        if hasattr(awaitable, "close"):
+            return
+        if awaitable is not None:
             awaitable.close()
         raise InvalidRequestError(
             "Synchronous CortexMux APIs cannot run inside an active event loop; "
             "use the corresponding async method."
         )
+
+    def _iterate_sync_stream(
+        self,
+        stream: AsyncGenerator[StructuredStreamEvent, None],
+    ) -> Iterator[StructuredStreamEvent]:
+        """Adapt one async generator to the facade's shared synchronous runner."""
+        try:
+            while True:
+                try:
+                    yield self._sync(_next_stream_event(stream))
+                except StopAsyncIteration:
+                    return
+        finally:
+            self._sync(_close_stream(stream))
 
     async def __aenter__(self) -> CortexMux:
         """Enter an asynchronous facade context."""
@@ -707,6 +909,23 @@ def _request_for(task: TaskType | str, fields: dict[str, Any]) -> CortexRequest:
         return classes[task_type].model_validate({"task": task_type, **fields})
     except ValueError as exc:
         raise InvalidRequestError("Request validation failed.", task=task_type.value) from exc
+
+
+async def _next_stream_event(
+    stream: AsyncGenerator[StructuredStreamEvent, None],
+) -> StructuredStreamEvent:
+    """Return the next structured stream event as a coroutine for asyncio.Runner."""
+    return await anext(stream)
+
+
+async def _close_stream(stream: AsyncGenerator[StructuredStreamEvent, None]) -> None:
+    """Close a structured async stream after exhaustion or early consumer exit."""
+    await stream.aclose()
+
+
+def _safe_excerpt(content: str, limit: int = 200) -> str:
+    """Return a bounded single-line excerpt without control characters."""
+    return "".join(character if character.isprintable() else " " for character in content[:limit])
 
 
 def _web_extraction_prompt(

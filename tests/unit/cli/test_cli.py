@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +14,12 @@ from cortexmux.cli.main import app
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.common import ImageArtifact, ModelInfo
 from cortexmux.schemas.responses import (
+    ChatResponse,
     DataAnalysisResponse,
     ImageGenerationResponse,
     TextResponse,
 )
+from cortexmux.selection import MachineProfile, QualificationManifest, QualificationSuite
 
 runner = CliRunner()
 
@@ -24,7 +27,7 @@ runner = CliRunner()
 def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "0.3.0" in result.stdout
+    assert "0.5.1" in result.stdout
 
 
 def test_doctor_without_network_providers(tmp_path: Path) -> None:
@@ -84,6 +87,13 @@ class FakeMux:
     def list_models(self, provider: str) -> list[ModelInfo]:
         return [ModelInfo(name="model", provider=provider)]
 
+    def qualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        return QualificationManifest(
+            machine=MachineProfile(system="test", release="1", architecture="arm64"),
+            candidates=[],
+            recommendations=[],
+        )
+
     def run(self, task: str, **fields: Any) -> TextResponse:
         return TextResponse(
             task=TaskType.TEXT_GENERATION,
@@ -91,6 +101,14 @@ class FakeMux:
             model=str(fields.get("model", "model")),
             request_id="r",
             content=f"{task} result",
+        )
+
+    def chat(self, prompt: str, **fields: Any) -> ChatResponse:
+        return ChatResponse(
+            provider=str(fields.get("provider", "fake")),
+            model=str(fields.get("model", "model")),
+            request_id="r",
+            content="chat result",
         )
 
     def generate_image(self, prompt: str, **fields: Any) -> ImageGenerationResponse:
@@ -132,6 +150,37 @@ def test_provider_models_and_generation_commands(fake_mux: None, tmp_path: Path)
     assert runner.invoke(app, ["providers", "--json"]).exit_code == 0
     models = runner.invoke(app, ["models", "list", "--provider", "fake", "--json"])
     assert models.exit_code == 0 and "model" in models.stdout
+    suite = tmp_path / "suite.json"
+    suite.write_text(
+        json.dumps(
+            {
+                "candidates": [{"id": "one", "provider": "fake", "model": "model"}],
+                "cases": [
+                    {
+                        "id": "case",
+                        "task": "chat",
+                        "prompt": "x",
+                        "validator": "exact_text",
+                        "expected_text": "OK",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.json"
+    qualified = runner.invoke(
+        app,
+        [
+            "models",
+            "qualify",
+            "--suite",
+            str(suite),
+            "--output",
+            str(manifest),
+        ],
+    )
+    assert qualified.exit_code == 0 and manifest.is_file()
     for command in ("chat", "generate"):
         result = runner.invoke(
             app,

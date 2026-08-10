@@ -20,6 +20,7 @@ from cortexmux.core.exceptions import (
 )
 from cortexmux.providers.comfyui.workflow import InputBinding, WorkflowDefinition
 from cortexmux.schemas.progress import ProgressEvent
+from cortexmux.selection import load_qualification_suite, write_qualification_manifest
 from cortexmux.version import __version__
 
 app = typer.Typer(help="One interface. Multiple models. Full control.", no_args_is_help=True)
@@ -95,6 +96,32 @@ def models_list(
             models = mux.list_models(provider)
         _display([model.model_dump(mode="json") for model in models], as_json)
     except CortexMuxError as exc:
+        _fail(exc)
+
+
+@models_app.command("qualify")
+def models_qualify(
+    suite: Path = typer.Option(..., "--suite", exists=True, dir_okay=False),
+    output: Path = typer.Option(..., "--output", dir_okay=False),
+    config: Path | None = typer.Option(None, "--config", exists=True, dir_okay=False),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+) -> None:
+    """Benchmark model configurations and write a portable recommendation manifest."""
+    try:
+        qualification_suite = load_qualification_suite(suite)
+        with CortexMux.from_env(config_path=config) as mux:
+            manifest = mux.qualify_models(qualification_suite)
+        written = write_qualification_manifest(manifest, output, overwrite=overwrite)
+        _display(
+            {
+                "output": str(written),
+                "recommendations": [
+                    item.model_dump(mode="json") for item in manifest.recommendations
+                ],
+            },
+            True,
+        )
+    except (CortexMuxError, OSError, ValueError) as exc:
         _fail(exc)
 
 
@@ -284,7 +311,7 @@ def workflows_validate(
 def _run_response(task: str, as_json: bool, **fields: Any) -> None:
     try:
         with CortexMux.from_env() as mux:
-            response = mux.run(task, **fields)
+            response = mux.chat(**fields) if task == "chat" else mux.run(task, **fields)
         _response_output(response, as_json)
     except CortexMuxError as exc:
         _fail(exc)

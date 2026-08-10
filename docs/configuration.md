@@ -5,11 +5,17 @@ Without `CORTEXMUX_CONFIG`, CortexMux checks the `platformdirs` user
 configuration directory for `config.toml`.
 
 Supported environment variables include `CORTEXMUX_OLLAMA_BASE_URL`,
+`CORTEXMUX_OPENAI_ENABLED`, `CORTEXMUX_OPENAI_BASE_URL`,
 `CORTEXMUX_COMFYUI_BASE_URL`, `CORTEXMUX_OUTPUT_DIR`,
 `CORTEXMUX_ALLOW_REMOTE_HOSTS`, `CORTEXMUX_LOG_LEVEL`, task model defaults, and
 `CORTEXMUX_DEFAULT_COMFYUI_WORKFLOW`. Optional page retrieval uses
 `CORTEXMUX_WEB_ENABLED`, `CORTEXMUX_WEB_ALLOWED_HOSTS`, and
 `CORTEXMUX_WEB_ALLOW_PRIVATE_HOSTS`. Empty model strings mean unset.
+
+OpenAI remains disabled by default. When enabled, its API key is read from the
+environment variable named by `providers.openai.api_key_env` (default
+`OPENAI_API_KEY`), and `api.openai.com` must be explicitly approved under
+`core.approved_hosts`. See [model qualification](model-qualification.md).
 
 ## Project model profiles
 
@@ -26,14 +32,26 @@ active_profile = "balanced"
 validate_model_availability = true
 
 [routing.profiles.fast]
-chat = { provider = "ollama", model = "llama3.2:1b" }
+chat = { provider = "ollama", model = "qwen3:4b" }
 structured_output = { provider = "ollama", model = "qwen3:4b" }
 
 [routing.profiles.balanced]
 chat = { provider = "ollama", model = "qwen3:4b" }
-vision = { provider = "ollama", model = "gemma3:4b" }
+vision = { provider = "ollama", model = "ministral-3:8b" }
 embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
+
+[routing.profiles.quality]
+chat = { provider = "ollama", model = "qwen3.6:27b", options = { num_ctx = 8192, num_predict = 2048 } }
+structured_output = { provider = "ollama", model = "qwen3.6:27b", options = { num_ctx = 8192, num_predict = 1024, temperature = 0 } }
+vision = { provider = "ollama", model = "qwen3.6:27b", options = { num_ctx = 8192, num_predict = 1024 } }
 ```
+
+Profile route options are merged into the request before execution. Explicit
+request options take precedence. This is useful for large local models: the
+official `qwen3.6:27b` model otherwise selects a context that can exceed the
+practical unified-memory budget of a 24 GB Mac. The committed `quality`
+example bounds it to 8192 tokens; it remains slower than the `balanced`
+profile and is intended for deliberate high-quality requests.
 
 With `validate_model_availability = true` (the default), CortexMux calls the
 provider's model listing before execution and raises `ModelNotFoundError` if
@@ -45,6 +63,7 @@ provider whose model inventory cannot be listed reliably.
 with CortexMux.from_env(config_path="config.toml") as mux:
     quick = mux.chat("Résume ce texte", model_profile="fast")
     default = mux.chat("Explique cette décision")  # profile `balanced`
+    detailed = mux.chat("Analyse cette architecture", model_profile="quality")
 ```
 
 Provider headers are secret values. Do not commit credentials. Remote hosts
@@ -59,3 +78,9 @@ must pass.
 Web retrieval is configured separately under `[web]`. It is disabled by
 default and does not inherit `core.allow_remote_hosts`, which controls provider
 endpoints. See [web extraction](web-extraction.md).
+
+The optional `[mcp.capitalforge]` section starts a separate local process only
+when explicitly enabled. It needs an absolute command, its fixed arguments,
+and bounded request/shutdown timeouts. It does not inherit the parent process
+environment. See [CapitalForge MCP](capitalforge-mcp.md) for the complete
+configuration and read-only safety boundary.

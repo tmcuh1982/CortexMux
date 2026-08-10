@@ -10,11 +10,14 @@ import pytest
 
 from cortexmux.core.exceptions import (
     InvalidRequestError,
+    MCPToolNotAllowedError,
     ModelNotFoundError,
     ProviderResponseError,
     StructuredOutputValidationError,
+    StructuredStreamInterruptedError,
 )
 from cortexmux.core.types import MessageRole
+from cortexmux.mcp import MCPTool, MCPToolResult
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
 from cortexmux.schemas.common import ChatMessage
 from cortexmux.schemas.requests import (
@@ -24,12 +27,176 @@ from cortexmux.schemas.requests import (
     TextGenerationRequest,
     VisionRequest,
 )
+from cortexmux.schemas.responses import StructuredStreamChunk, StructuredStreamCompleted
 
 
 def provider_for(handler: httpx.MockTransport) -> OllamaProvider:
     """Create a provider backed by one mock transport."""
     http_client = httpx.AsyncClient(base_url="http://localhost:11434", transport=handler)
     return OllamaProvider(OllamaClient("http://localhost:11434", timeout=10, client=http_client))
+
+
+class CapitalForgeMCPDouble:
+    """In-memory read-only MCP double for native Ollama tool-loop tests."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def list_tools(self) -> list[MCPTool]:
+        """Return only the five documented read tools."""
+        return [
+            MCPTool(
+                name=name,
+                description=f"Read {name}",
+                input_schema={"type": "object", "properties": {}},
+            )
+            for name in (
+                "capitalforge_source_catalog",
+                "capitalforge_portfolio_summary",
+                "capitalforge_positions",
+                "capitalforge_zonebourse_signals",
+                "capitalforge_public_signals",
+            )
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> MCPToolResult:
+        """Record the server-bound arguments without receiving chat history."""
+        self.calls.append((name, arguments))
+        return MCPToolResult(
+            tool_name=name,
+            data={"source": name, "as_of": "2026-08-07", "notice": "Lecture seule."},
+        )
+
+    async def close(self) -> None:
+        """Satisfy the provider cleanup contract."""
+
+
+@pytest.mark.asyncio
+async def test_capitalforge_tool_loop_uses_french_policy_and_bounded_read_context() -> None:
+    """Give Ollama only safe tools, never a raw history or a mutation capability."""
+    double = CapitalForgeMCPDouble()
+    responses = iter(
+        [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "capitalforge_source_catalog", "arguments": {}}},
+                        {"function": {"name": "capitalforge_portfolio_summary", "arguments": {}}},
+                    ],
+                }
+            },
+            {"message": {"role": "assistant", "content": "Voici une synthèse locale."}},
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["messages"][0]["role"] == "system"
+        assert "French for French" in body["messages"][0]["content"]
+        assert {item["function"]["name"] for item in body["tools"]} == {
+            "capitalforge_source_catalog",
+            "capitalforge_portfolio_summary",
+            "capitalforge_positions",
+            "capitalforge_zonebourse_signals",
+            "capitalforge_public_signals",
+        }
+        assert "HISTORY_SECRET_MARKER" not in json.dumps(body.get("messages", [])[0])
+        return httpx.Response(200, json=next(responses))
+
+    http_client = httpx.AsyncClient(
+        base_url="http://localhost:11434", transport=httpx.MockTransport(handler)
+    )
+    provider = OllamaProvider(
+        OllamaClient("http://localhost:11434", timeout=10, client=http_client),
+        capitalforge_mcp=double,  # type: ignore[arg-type]
+    )
+    response = await provider.chat_with_capitalforge(
+        ChatRequest(
+            provider="ollama",
+            model="qwen3:4b",
+            messages=[
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content="Fais une analyse générale. HISTORY_SECRET_MARKER",
+                )
+            ],
+        )
+    )
+    assert response.content == "Voici une synthèse locale."
+    assert double.calls == [
+        ("capitalforge_source_catalog", {}),
+        ("capitalforge_portfolio_summary", {}),
+    ]
+    assert "HISTORY_SECRET_MARKER" not in repr(double.calls)
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_capitalforge_tool_loop_rejects_more_than_eight_calls() -> None:
+    """Refuse a model-driven tool loop before a ninth read reaches the server."""
+    double = CapitalForgeMCPDouble()
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "capitalforge_source_catalog", "arguments": {}}},
+                        {"function": {"name": "capitalforge_portfolio_summary", "arguments": {}}},
+                        {"function": {"name": "capitalforge_positions", "arguments": {"limit": 1}}},
+                        {"function": {"name": "capitalforge_positions", "arguments": {"limit": 2}}},
+                        {"function": {"name": "capitalforge_positions", "arguments": {"limit": 3}}},
+                        {
+                            "function": {
+                                "name": "capitalforge_public_signals",
+                                "arguments": {"limit": 1},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "capitalforge_public_signals",
+                                "arguments": {"limit": 2},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "capitalforge_public_signals",
+                                "arguments": {"limit": 3},
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "capitalforge_zonebourse_signals",
+                                "arguments": {"market": "usa"},
+                            }
+                        },
+                    ],
+                }
+            },
+        )
+
+    http_client = httpx.AsyncClient(
+        base_url="http://localhost:11434", transport=httpx.MockTransport(handler)
+    )
+    provider = OllamaProvider(
+        OllamaClient("http://localhost:11434", timeout=10, client=http_client),
+        capitalforge_mcp=double,  # type: ignore[arg-type]
+    )
+    with pytest.raises(MCPToolNotAllowedError, match="eight"):
+        await provider.chat_with_capitalforge(
+            ChatRequest(
+                provider="ollama",
+                model="qwen3:4b",
+                messages=[ChatMessage(role=MessageRole.USER, content="Analyse.")],
+            )
+        )
+    assert len(double.calls) == 8
+    await provider.close()
 
 
 @pytest.mark.asyncio
@@ -137,8 +304,121 @@ async def test_structured_omits_unspecified_think_and_preserves_options() -> Non
     )
 
     assert response.parsed == {"name": "ok"}
+    assert bodies[0]["stream"] is False
+    assert bodies[0]["format"] == "json"
     assert "think" not in bodies[0]
     assert bodies[0]["options"] == {"temperature": 0.1}
+    await provider.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["ministral-3:8b", "qwen3:4b"])
+async def test_structured_stream_payload_fragments_and_validated_completion(
+    model: str,
+) -> None:
+    bodies: list[dict[str, object]] = []
+    stream = (
+        b'{"response":"{\\"name\\":","done":false}\n'
+        b'{"response":"\\"ok\\"","done":false}\n'
+        b'{"response":"}","done":true,"prompt_eval_count":2,"eval_count":3}\n'
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=stream)
+
+    provider = provider_for(httpx.MockTransport(handler))
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+    events = [
+        event
+        async for event in provider.stream(
+            StructuredOutputRequest(
+                provider="ollama",
+                model=model,
+                prompt="Return a name.",
+                json_schema=schema,
+                think=False,
+            )
+        )
+    ]
+
+    assert bodies == [
+        {
+            "model": model,
+            "prompt": "Return a name.",
+            "stream": True,
+            "format": schema,
+            "think": False,
+            "options": {},
+        }
+    ]
+    chunks = [event for event in events if isinstance(event, StructuredStreamChunk)]
+    assert [chunk.content for chunk in chunks] == ['{"name":', '"ok"', "}"]
+    completed = events[-1]
+    assert isinstance(completed, StructuredStreamCompleted)
+    assert completed.content == '{"name":"ok"}'
+    assert completed.parsed == {"name": "ok"}
+    assert completed.provider == "ollama"
+    assert completed.model == model
+    assert completed.request_id
+    assert completed.usage is not None
+    assert completed.usage.total_tokens == 5
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_structured_stream_rejects_invalid_final_json_with_safe_excerpt() -> None:
+    stream = b'{"response":"{\\"wrong\\":true}","done":true}\n'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream)
+
+    provider = provider_for(httpx.MockTransport(handler))
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+    seen: list[object] = []
+    with pytest.raises(StructuredOutputValidationError) as error:
+        async for event in provider.stream(
+            StructuredOutputRequest(
+                provider="ollama",
+                model="ministral-3:8b",
+                prompt="Return a name.",
+                json_schema=schema,
+            )
+        ):
+            seen.append(event)
+
+    assert len(seen) == 1
+    assert isinstance(seen[0], StructuredStreamChunk)
+    assert len(str(error.value.context["safe_excerpt"])) <= 200
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_structured_stream_requires_ollama_completion_marker() -> None:
+    stream = b'{"response":"{\\"name\\":","done":false}\n'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream)
+
+    provider = provider_for(httpx.MockTransport(handler))
+    with pytest.raises(StructuredStreamInterruptedError):
+        async for _ in provider.stream(
+            StructuredOutputRequest(
+                provider="ollama",
+                model="qwen3:4b",
+                prompt="Return a name.",
+                think=False,
+            )
+        ):
+            pass
     await provider.close()
 
 
