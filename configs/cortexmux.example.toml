@@ -16,6 +16,21 @@ structured_output = ""
 vision = ""
 embedding = ""
 
+# Remote providers are opt-in and remain blocked unless the host is explicitly
+# approved under [core]. The API key is read from OPENAI_API_KEY by default.
+[providers.openai]
+enabled = false
+base_url = "https://api.openai.com/v1"
+timeout_seconds = 120
+api_key_env = "OPENAI_API_KEY"
+
+[providers.openai.defaults]
+chat = ""
+text_generation = ""
+structured_output = ""
+vision = ""
+embedding = ""
+
 [providers.comfyui]
 enabled = true
 base_url = "http://127.0.0.1:8188"
@@ -56,8 +71,8 @@ image_generation_provider = "comfyui"
 data_analysis_provider = "data"
 
 [routing.profiles.fast]
-chat = { provider = "ollama", model = "llama3.2:1b" }
-text_generation = { provider = "ollama", model = "llama3.2:1b" }
+chat = { provider = "ollama", model = "qwen3:4b" }
+text_generation = { provider = "ollama", model = "qwen3:4b" }
 structured_output = { provider = "ollama", model = "qwen3:4b" }
 embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
 
@@ -65,7 +80,16 @@ embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
 chat = { provider = "ollama", model = "qwen3:4b" }
 text_generation = { provider = "ollama", model = "qwen3:4b" }
 structured_output = { provider = "ollama", model = "qwen3:4b" }
-vision = { provider = "ollama", model = "gemma3:4b" }
+vision = { provider = "ollama", model = "ministral-3:8b" }
+embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
+
+# Qwen 3.6 27B defaults to a context too large for a 24 GB unified-memory Mac.
+# Route options keep it fully accelerated while callers may still override them.
+[routing.profiles.quality]
+chat = { provider = "ollama", model = "qwen3.6:27b", options = { num_ctx = 8192, num_predict = 2048 } }
+text_generation = { provider = "ollama", model = "qwen3.6:27b", options = { num_ctx = 8192, num_predict = 2048 } }
+structured_output = { provider = "ollama", model = "qwen3.6:27b", options = { num_ctx = 8192, num_predict = 1024, temperature = 0 } }
+vision = { provider = "ollama", model = "qwen3.6:27b", options = { num_ctx = 8192, num_predict = 1024 } }
 embedding = { provider = "ollama", model = "nomic-embed-text:latest" }
 
 [data]

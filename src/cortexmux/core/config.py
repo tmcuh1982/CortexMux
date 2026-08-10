@@ -51,6 +51,17 @@ class OllamaConfig(BaseModel):
     defaults: OllamaDefaults = Field(default_factory=OllamaDefaults)
 
 
+class OpenAIConfig(BaseModel):
+    """Explicit opt-in OpenAI Responses API configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://api.openai.com/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
+    defaults: OllamaDefaults = Field(default_factory=OllamaDefaults)
+
+
 class ComfyUIConfig(BaseModel):
     """ComfyUI endpoint and workflow configuration."""
 
@@ -90,6 +101,7 @@ class ProvidersConfig(BaseModel):
     """Built-in provider configurations."""
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
 
 
@@ -116,6 +128,7 @@ class TaskModelRoute(BaseModel):
 
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
+    options: dict[str, str | int | float | bool | list[str]] = Field(default_factory=dict)
 
 
 class ModelProfile(BaseModel):
@@ -219,8 +232,9 @@ class CortexMuxConfig(BaseModel):
 
     def model_for(self, task: TaskType, provider: str) -> str | None:
         """Return a provider's configured default model for a task."""
-        if provider == "ollama" and hasattr(self.providers.ollama.defaults, task.value):
-            value = getattr(self.providers.ollama.defaults, task.value)
+        if provider in {"ollama", "openai"}:
+            defaults = getattr(self.providers, provider).defaults
+            value = getattr(defaults, task.value, None)
             return value if isinstance(value, str) else None
         return None
 
@@ -275,6 +289,8 @@ def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:
 def _environment_values(env: dict[str, str]) -> dict[str, Any]:
     mapping: dict[str, tuple[str, ...]] = {
         "CORTEXMUX_OLLAMA_BASE_URL": ("providers", "ollama", "base_url"),
+        "CORTEXMUX_OPENAI_BASE_URL": ("providers", "openai", "base_url"),
+        "CORTEXMUX_OPENAI_ENABLED": ("providers", "openai", "enabled"),
         "CORTEXMUX_COMFYUI_BASE_URL": ("providers", "comfyui", "base_url"),
         "CORTEXMUX_OUTPUT_DIR": ("core", "output_dir"),
         "CORTEXMUX_ALLOW_REMOTE_HOSTS": ("core", "allow_remote_hosts"),
@@ -300,6 +316,7 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
             "CORTEXMUX_ALLOW_REMOTE_HOSTS",
             "CORTEXMUX_WEB_ENABLED",
             "CORTEXMUX_WEB_ALLOW_PRIVATE_HOSTS",
+            "CORTEXMUX_OPENAI_ENABLED",
         }:
             value = value.lower() in {"1", "true", "yes", "on"}
         cursor = result

@@ -4,11 +4,31 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-10
+
 ### Added
 
 - Opt-in, provider-independent CapitalForge MCP stdio client with MCP 2025
   negotiation, bounded structured results, a five-tool read-only allowlist,
   child-process cleanup, and native Ollama `qwen3:4b` tool-loop support.
+- Per-task model-profile options, with explicit request options taking
+  precedence, plus a memory-bounded `qwen3.6:27b` quality-profile example.
+- Provider-neutral model qualification with deterministic text/JSON cases,
+  machine and memory metadata, fast/balanced/quality scoring, and atomic
+  JSON or optional YAML recommendation manifests.
+- Explicit opt-in OpenAI Responses API provider with authenticated model
+  discovery and text, chat, and structured-output normalization.
+- `cortexmux models qualify` command and a mixed Ollama/GPT-5.6 example suite.
+
+### Changed
+
+- Example fast and vision routes now use `qwen3:4b` and
+  `ministral-3:8b`, removing the retired Llama 3.2 and Gemma 3 defaults.
+
+### Fixed
+
+- The `cortexmux chat` command now uses the facade's chat-message
+  normalization instead of constructing an invalid raw chat request.
 
 ## [0.4.0] - 2026-08-01
 

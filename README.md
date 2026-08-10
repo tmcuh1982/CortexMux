@@ -8,13 +8,16 @@
 
 CortexMux is a modular, local-first Python library for routing AI tasks across
 language models, vision models, ComfyUI image workflows, and deterministic
-data-analysis engines. Version 0.4.0 is an alpha-quality stable release: its public
+data-analysis engines. Version 0.5.0 is an alpha-quality stable release: its public
 surface is tested, but production deployments should pin the patch version.
 
 ## Features
 
 - Deterministic provider/model routing with no ambiguous fallback.
+- Deterministic cross-provider model qualification with machine-specific
+  JSON/YAML recommendation manifests.
 - Native Ollama text, chat, JSON, vision, embedding, and incremental streaming.
+- Explicit opt-in OpenAI Responses API text, chat, and structured output.
 - Native ComfyUI workflow catalogs, typed progress, binding, queueing, and safe downloads.
 - Safe Pandas analysis plus optional Polars and DuckDB loading.
 - Whitelisted analysis plans and bounded structured results.
@@ -46,7 +49,8 @@ python -m pip install "cortexmux[all]"
 ```
 
 Extras are `comfyui`, `data`, `polars`, `duckdb`, `excel`, `visualization`,
-`all`, and `dev`. Optional packages are imported only when their feature is used.
+`yaml`, `all`, and `dev`. Optional packages are imported only when their feature
+is used.
 
 ## Quick start
 
@@ -218,6 +222,9 @@ cortexmux version
 cortexmux doctor
 cortexmux providers
 cortexmux models list --provider ollama
+cortexmux models qualify \
+  --suite configs/model-qualification.example.json \
+  --output outputs/model-qualification.json
 cortexmux workflows list
 cortexmux chat --provider ollama --model my-model --prompt "Hello"
 cortexmux image generate --workflow text-to-image --prompt "A local workflow"
@@ -225,6 +232,8 @@ cortexmux data analyze sales.csv --engine auto
 ```
 
 Commands that return structured values support `--json`.
+See [model qualification](docs/model-qualification.md) for candidate-specific
+options, scoring, OpenAI opt-in, and portable manifests.
 
 ## End-to-end local demonstration
 

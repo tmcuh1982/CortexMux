@@ -78,7 +78,13 @@ async def test_project_model_profiles_select_installed_models() -> None:
             "routing": {
                 "active_profile": "fast",
                 "profiles": {
-                    "fast": {"text_generation": {"provider": "ollama", "model": "fast-model"}},
+                    "fast": {
+                        "text_generation": {
+                            "provider": "ollama",
+                            "model": "fast-model",
+                            "options": {"num_ctx": 8192, "temperature": 0.2},
+                        }
+                    },
                     "balanced": {
                         "text_generation": {
                             "provider": "ollama",
@@ -94,12 +100,23 @@ async def test_project_model_profiles_select_installed_models() -> None:
     router = Router(registry, config)
 
     default = await router.route(TextGenerationRequest(prompt="hello"))
-    selected = await router.route(TextGenerationRequest(prompt="hello", model_profile="balanced"))
+    selected = await router.route(
+        TextGenerationRequest(
+            prompt="hello",
+            model_profile="balanced",
+            options={"temperature": 0.1},
+        )
+    )
 
     assert default.model == "fast-model"
     assert default.routing is not None
     assert default.routing.routing_reason == "configured_model_profile"
+    assert registry.get("ollama").requests[0].options == {
+        "num_ctx": 8192,
+        "temperature": 0.2,
+    }
     assert selected.model == "balanced-model"
+    assert registry.get("ollama").requests[1].options == {"temperature": 0.1}
 
 
 @pytest.mark.asyncio
@@ -180,11 +197,15 @@ def test_example_model_profiles_use_exact_installed_tags() -> None:
     config = CortexMuxConfig.load(path=config_path)
     fast = config.routing.profile_for("fast")
     balanced = config.routing.profile_for("balanced")
+    quality = config.routing.profile_for("quality")
 
     assert fast is not None and fast.embedding is not None
     assert balanced is not None and balanced.embedding is not None
+    assert quality is not None and quality.chat is not None
     assert fast.embedding.model == "nomic-embed-text:latest"
     assert balanced.embedding.model == "nomic-embed-text:latest"
+    assert quality.chat.model == "qwen3.6:27b"
+    assert quality.chat.options["num_ctx"] == 8192
 
 
 def test_web_environment_configuration() -> None:
@@ -198,6 +219,18 @@ def test_web_environment_configuration() -> None:
     assert config.web.enabled
     assert config.web.allowed_hosts == {"one.example", "two.example"}
     assert not config.web.allow_private_hosts
+
+
+def test_openai_environment_configuration_is_explicit() -> None:
+    config = CortexMuxConfig.load(
+        environ={
+            "CORTEXMUX_OPENAI_ENABLED": "true",
+            "CORTEXMUX_OPENAI_BASE_URL": "https://api.openai.com/v1",
+        }
+    )
+    assert config.providers.openai.enabled
+    assert config.providers.openai.base_url == "https://api.openai.com/v1"
+    assert config.providers.openai.api_key is None
 
 
 def test_network_policy_and_safe_paths(tmp_path: Path) -> None:

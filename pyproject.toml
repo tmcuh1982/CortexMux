@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cortexmux"
-version = "0.4.0"
+version = "0.5.0"
 description = "A modular, local-first router for AI and deterministic data-analysis tasks."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,8 +35,9 @@ polars = ["numpy>=1.26", "pandas>=2.2", "polars>=1.0"]
 duckdb = ["duckdb>=1.0", "numpy>=1.26", "pandas>=2.2"]
 excel = ["openpyxl>=3.1"]
 visualization = ["matplotlib>=3.8"]
+yaml = ["PyYAML>=6,<7"]
 all = [
-  "cortexmux[comfyui,data,polars,duckdb,excel,visualization]",
+  "cortexmux[comfyui,data,polars,duckdb,excel,visualization,yaml]",
 ]
 dev = [
   "build>=1.2",
@@ -78,7 +79,15 @@ warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["numpy.*", "pandas.*", "polars.*", "duckdb.*", "matplotlib.*", "websockets.*"]
+module = [
+  "numpy.*",
+  "pandas.*",
+  "polars.*",
+  "duckdb.*",
+  "matplotlib.*",
+  "websockets.*",
+  "yaml.*",
+]
 ignore_missing_imports = true
 follow_imports = "skip"
 

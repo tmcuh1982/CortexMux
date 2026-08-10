@@ -20,6 +20,7 @@ from cortexmux.core.exceptions import (
     StructuredStreamInterruptedError,
     UnsupportedTaskError,
 )
+from cortexmux.core.json_schema import validate_json_schema
 from cortexmux.core.types import TaskType
 from cortexmux.mcp import MCPStdioClient, MCPTool
 from cortexmux.providers.base import BaseProvider
@@ -370,7 +371,7 @@ class OllamaProvider(BaseProvider):
         try:
             parsed = json.loads(content)
             if request.json_schema:
-                _validate_json_schema(parsed, request.json_schema)
+                validate_json_schema(parsed, request.json_schema)
         except (json.JSONDecodeError, ValueError) as exc:
             raise StructuredOutputValidationError(
                 "Ollama returned invalid structured output.",
@@ -574,31 +575,3 @@ def _encode_image(value: Path | bytes | str, max_size_mb: int) -> str:
     if len(data) > limit:
         raise InvalidRequestError("Vision image exceeds the configured size limit.")
     return base64.b64encode(data).decode("ascii")
-
-
-def _validate_json_schema(value: Any, schema: dict[str, Any], path: str = "$") -> None:
-    expected = schema.get("type")
-    checks: dict[str, type | tuple[type, ...]] = {
-        "object": dict,
-        "array": list,
-        "string": str,
-        "integer": int,
-        "number": (int, float),
-        "boolean": bool,
-        "null": type(None),
-    }
-    if expected in checks and not isinstance(value, checks[expected]):
-        raise ValueError(f"{path} must be {expected}")
-    if isinstance(value, dict):
-        required = schema.get("required", [])
-        for key in required if isinstance(required, list) else []:
-            if key not in value:
-                raise ValueError(f"{path}.{key} is required")
-        properties = schema.get("properties", {})
-        if isinstance(properties, dict):
-            for key, child in properties.items():
-                if key in value and isinstance(child, dict):
-                    _validate_json_schema(value[key], child, f"{path}.{key}")
-    if isinstance(value, list) and isinstance(schema.get("items"), dict):
-        for index, item in enumerate(value):
-            _validate_json_schema(item, schema["items"], f"{path}[{index}]")

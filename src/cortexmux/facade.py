@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncGenerator, Coroutine, Iterator
 from pathlib import Path
 from types import TracebackType
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import (
+    ConfigurationError,
     InvalidRequestError,
     ProviderResponseError,
     StructuredOutputValidationError,
@@ -31,6 +33,7 @@ from cortexmux.providers.comfyui import (
 )
 from cortexmux.providers.data import DataAnalysisProvider, MathVerifier
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
+from cortexmux.providers.openai import OpenAIClient, OpenAIProvider
 from cortexmux.schemas.calculations import CalculationClaim, CalculationVerification
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
 from cortexmux.schemas.progress import ProgressCallback
@@ -57,6 +60,7 @@ from cortexmux.schemas.responses import (
     TextResponse,
     VisionResponse,
 )
+from cortexmux.selection import ModelQualifier, QualificationManifest, QualificationSuite
 from cortexmux.web import WebPage, WebPageFetcher
 
 ResponseT = TypeVar("ResponseT", bound=CortexResponse)
@@ -125,6 +129,32 @@ class CortexMux:
                     ),
                 )
             self.registry.register(OllamaProvider(ollama_client, capitalforge_mcp=capitalforge_mcp))
+        if self.config.providers.openai.enabled:
+            openai_settings = self.config.providers.openai
+            url = validate_provider_url(
+                openai_settings.base_url,
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                openai_settings.api_key.get_secret_value()
+                if openai_settings.api_key is not None
+                else os.environ.get(openai_settings.api_key_env)
+            )
+            if not configured_key:
+                raise ConfigurationError(
+                    "OpenAI is enabled but its API key is unavailable.",
+                    environment_variable=openai_settings.api_key_env,
+                )
+            self.registry.register(
+                OpenAIProvider(
+                    OpenAIClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=openai_settings.timeout_seconds,
+                    )
+                )
+            )
         if self.config.providers.comfyui.enabled:
             comfyui_settings = self.config.providers.comfyui
             url = validate_provider_url(
@@ -163,6 +193,14 @@ class CortexMux:
     def register_provider(self, provider: BaseProvider, *, replace: bool = False) -> None:
         """Register a custom provider on this facade instance."""
         self.registry.register(provider, replace=replace)
+
+    async def aqualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        """Benchmark configured provider/model combinations asynchronously."""
+        return await ModelQualifier(self.registry).qualify(suite)
+
+    def qualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        """Benchmark configured provider/model combinations synchronously."""
+        return self._sync(self.aqualify_models(suite))
 
     async def arun(self, request: CortexRequest | TaskType | str, **fields: Any) -> CortexResponse:
         """Validate and execute a generic asynchronous request."""
