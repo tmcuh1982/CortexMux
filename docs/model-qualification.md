@@ -25,11 +25,18 @@ The output contains both the full evidence and `routing_profiles`, a compact
 provider/model/options mapping that can be copied into a project's routing
 configuration without reinterpreting scores.
 
-Only `exact_text` and `exact_json` validators are supported. Models never grade
-other models, generated code is never executed, failures remain explicit, and
-tests run sequentially to avoid loading multiple large local models together.
-Each result keeps only a bounded output excerpt for diagnosis; suites should
-still contain synthetic or otherwise approved benchmark inputs.
+Only `exact_text` and `exact_json` validators are supported. Structured results
+record `syntax_valid`, `schema_valid`, and `expected_match` independently, so a
+semantically wrong value is not reported as malformed JSON. The overall
+`passed` field remains the strict conjunction used for scoring. Repetitions are
+scored independently; the example runs each case three times and defines its
+business terms explicitly to reduce ambiguous or one-off verdicts.
+
+Models never grade other models, generated code is never executed, failures
+remain explicit, and tests run sequentially to avoid loading multiple large
+local models together. Each result keeps only a bounded output excerpt for
+diagnosis; suites should still contain synthetic or otherwise approved
+benchmark inputs.
 
 ## OpenAI opt-in
 

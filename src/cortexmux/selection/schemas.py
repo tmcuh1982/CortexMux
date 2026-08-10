@@ -142,6 +142,9 @@ class CaseQualification(BaseModel):
     task: TaskType
     repetition: int = Field(ge=1)
     passed: bool
+    syntax_valid: bool | None = None
+    schema_valid: bool | None = None
+    expected_match: bool | None = None
     latency_seconds: float = Field(ge=0)
     prompt_tokens: int | None = Field(default=None, ge=0)
     completion_tokens: int | None = Field(default=None, ge=0)

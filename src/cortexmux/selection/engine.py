@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Any
 
 from cortexmux.core.exceptions import CortexMuxError, ProviderResponseError
+from cortexmux.core.json_schema import validate_json_schema
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.types import MessageRole, TaskType
 from cortexmux.schemas.common import ChatMessage, ModelInfo, UsageMetadata
@@ -100,8 +101,11 @@ class ModelQualifier:
                 )
                 if not isinstance(response, ChatResponse):
                     raise ProviderResponseError("Benchmark expected a chat response.")
-                passed = _validate_text(response.content, case)
+                expected_match = _validate_text(response.content, case)
+                passed = expected_match
                 observed = response.content[:1_000]
+                syntax_valid = None
+                schema_valid = None
             else:
                 response = await provider.execute(
                     StructuredOutputRequest(
@@ -115,7 +119,12 @@ class ModelQualifier:
                 )
                 if not isinstance(response, StructuredResponse):
                     raise ProviderResponseError("Benchmark expected a structured response.")
-                passed = _validate_json(response.parsed, case)
+                syntax_valid, schema_valid, expected_match = _validate_json(
+                    response.content,
+                    response.parsed,
+                    case,
+                )
+                passed = syntax_valid and schema_valid and expected_match
                 observed = json.dumps(response.parsed, ensure_ascii=False, default=str)[:1_000]
             latency = perf_counter() - started
             return CaseQualification(
@@ -123,6 +132,9 @@ class ModelQualifier:
                 task=case.task,
                 repetition=repetition,
                 passed=passed,
+                syntax_valid=syntax_valid,
+                schema_valid=schema_valid,
+                expected_match=expected_match,
                 latency_seconds=latency,
                 prompt_tokens=response.usage.prompt_tokens if response.usage else None,
                 completion_tokens=response.usage.completion_tokens if response.usage else None,
@@ -215,10 +227,19 @@ def _validate_text(content: str, case: BenchmarkCase) -> bool:
     return content.strip() == case.expected_text.strip()
 
 
-def _validate_json(parsed: Any, case: BenchmarkCase) -> bool:
+def _validate_json(content: str, parsed: Any, case: BenchmarkCase) -> tuple[bool, bool, bool]:
     if case.validator is not ValidationKind.EXACT_JSON or case.expected_json is None:
-        return False
-    return isinstance(parsed, dict) and _contains_expected(parsed, case.expected_json)
+        return False, False, False
+    try:
+        decoded = json.loads(content)
+    except json.JSONDecodeError:
+        return False, False, False
+    try:
+        validate_json_schema(decoded, case.json_schema or {})
+    except ValueError:
+        return True, False, False
+    expected_match = isinstance(parsed, dict) and _contains_expected(parsed, case.expected_json)
+    return True, True, expected_match
 
 
 def _contains_expected(actual: dict[str, Any], expected: dict[str, Any]) -> bool:

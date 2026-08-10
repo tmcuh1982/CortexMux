@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "repetitions": 1,
+  "repetitions": 3,
   "minimum_quality": 1.0,
   "cost_reference_usd": 0.01,
   "candidates": [
@@ -66,7 +66,7 @@
     {
       "id": "calcul-structure",
       "task": "structured_output",
-      "prompt": "À partir de [12.5, 17.5, 20], calcule le total, la moyenne arrondie à deux décimales et la tendance.",
+      "prompt": "À partir de [12.5, 17.5, 20], calcule le total, la moyenne arrondie à deux décimales et la tendance. La tendance vaut hausse si chaque valeur est strictement supérieure à la précédente, baisse si chaque valeur est strictement inférieure à la précédente, sinon stable.",
       "validator": "exact_json",
       "expected_json": {"total": 50.0, "moyenne": 16.67, "tendance": "hausse"},
       "json_schema": {

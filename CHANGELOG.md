@@ -4,6 +4,14 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-10
+
+### Changed
+
+- Structured model qualification now reports JSON syntax, schema conformance,
+  and expected-value accuracy separately; the example suite uses three
+  repetitions and an explicit deterministic trend definition.
+
 ## [0.5.0] - 2026-08-10
 
 ### Added

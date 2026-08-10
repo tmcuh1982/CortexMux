@@ -135,7 +135,7 @@ class MCPStdioClient:
                 {
                     "protocolVersion": _PROTOCOL_VERSION,
                     "capabilities": {},
-                    "clientInfo": {"name": self._client_name, "version": "0.5"},
+                    "clientInfo": {"name": self._client_name, "version": "0.5.1"},
                 },
             )
             version = response.get("protocolVersion")

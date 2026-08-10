@@ -160,6 +160,40 @@ async def test_unavailable_models_remain_auditable_and_are_not_recommended() -> 
     assert manifest.recommendations == []
 
 
+@pytest.mark.asyncio
+async def test_structured_validation_separates_format_schema_and_expected_values() -> None:
+    suite = QualificationSuite.model_validate(
+        {
+            "candidates": [{"id": "quality", "provider": "test", "model": "quality"}],
+            "cases": [
+                {
+                    "id": "semantic-mismatch",
+                    "task": "structured_output",
+                    "prompt": "return a value",
+                    "validator": "exact_json",
+                    "expected_json": {"value": 3},
+                    "json_schema": {
+                        "type": "object",
+                        "properties": {"value": {"type": "number"}},
+                        "required": ["value"],
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+        }
+    )
+    registry = ProviderRegistry()
+    registry.register(QualificationProvider())
+
+    manifest = await ModelQualifier(registry).qualify(suite)
+
+    result = manifest.candidates[0].cases[0]
+    assert result.syntax_valid is True
+    assert result.schema_valid is True
+    assert result.expected_match is False
+    assert result.passed is False
+
+
 def test_json_suite_and_manifest_round_trip(tmp_path: Path) -> None:
     example = Path("configs/model-qualification.example.json")
     suite = load_qualification_suite(example)
