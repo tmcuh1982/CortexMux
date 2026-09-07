@@ -4,6 +4,32 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-07
+
+### Added
+
+- Typed, preflight-validated OpenAI `service_tier`, reasoning effort, verbosity,
+  and output-token options, including explicit Standard/default processing.
+- Bounded OpenAI transient-error retries with exponential full-jitter backoff,
+  configurable limits, attempt metadata, provider request IDs, effective model
+  and tier metadata, and total provider-call duration.
+- Migration notes and precise documentation of the locally enforced JSON Schema
+  subset.
+
+### Changed
+
+- GPT-6 Astra defaults to `reasoning.effort: low` and accepts only `low`,
+  `medium`, `high`, `xhigh`, and `max`.
+- Per-request timeouts override the configured OpenAI provider timeout for each
+  attempt.
+
+### Fixed
+
+- Text and structured system instructions are sent through the Responses API
+  `instructions` field instead of being omitted.
+- JSON booleans no longer validate as `integer` or `number`, and unsupported
+  JSON Schema validation keywords are no longer silently ignored.
+
 ## [0.5.1] - 2026-08-10
 
 ### Changed

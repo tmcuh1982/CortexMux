@@ -15,7 +15,11 @@ Supported environment variables include `CORTEXMUX_OLLAMA_BASE_URL`,
 OpenAI remains disabled by default. When enabled, its API key is read from the
 environment variable named by `providers.openai.api_key_env` (default
 `OPENAI_API_KEY`), and `api.openai.com` must be explicitly approved under
-`core.approved_hosts`. See [model qualification](model-qualification.md).
+`core.approved_hosts`. `providers.openai.max_retries` defaults to `2`, with
+bounded full-jitter delays configured by `retry_base_delay_seconds` (default
+`0.25`) and `retry_max_delay_seconds` (default `2`). See
+[provider behavior](providers.md#openai-responses-api) and
+[model qualification](model-qualification.md).
 
 ## Project model profiles
 

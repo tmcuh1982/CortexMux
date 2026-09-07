@@ -152,6 +152,9 @@ class CortexMux:
                         url,
                         api_key=configured_key,
                         timeout=openai_settings.timeout_seconds,
+                        max_retries=openai_settings.max_retries,
+                        retry_base_delay_seconds=openai_settings.retry_base_delay_seconds,
+                        retry_max_delay_seconds=openai_settings.retry_max_delay_seconds,
                     )
                 )
             )
@@ -220,6 +223,8 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        system: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> TextResponse:
         """Generate text asynchronously."""
@@ -229,6 +234,8 @@ class CortexMux:
                 provider=provider,
                 model=model,
                 model_profile=model_profile,
+                system=system,
+                timeout=timeout,
                 options=options,
             )
         )
@@ -241,6 +248,8 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        system: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> TextResponse:
         """Generate text synchronously."""
@@ -250,6 +259,8 @@ class CortexMux:
                 provider=provider,
                 model=model,
                 model_profile=model_profile,
+                system=system,
+                timeout=timeout,
                 **options,
             )
         )
@@ -262,6 +273,7 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> ChatResponse:
         """Run a chat request asynchronously."""
@@ -276,6 +288,7 @@ class CortexMux:
                 provider=provider,
                 model=model,
                 model_profile=model_profile,
+                timeout=timeout,
                 options=options,
             )
         )
@@ -289,6 +302,7 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> ChatResponse:
         """Run a chat request synchronously."""
@@ -299,6 +313,7 @@ class CortexMux:
                 provider=provider,
                 model=model,
                 model_profile=model_profile,
+                timeout=timeout,
                 **options,
             )
         )
@@ -364,6 +379,8 @@ class CortexMux:
         model_profile: str | None = None,
         system: str | None = None,
         think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
     ) -> StructuredResponse:
         """Generate and validate structured JSON asynchronously."""
         schema = response_model.model_json_schema() if response_model else json_schema
@@ -378,6 +395,8 @@ class CortexMux:
                     json_schema=schema,
                     system=system,
                     think=think,
+                    timeout=timeout,
+                    options=options,
                 )
             ),
         )
@@ -396,6 +415,8 @@ class CortexMux:
         model_profile: str | None = None,
         system: str | None = None,
         think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
     ) -> StructuredResponse:
         """Generate and validate structured JSON synchronously."""
         return self._sync(
@@ -408,6 +429,8 @@ class CortexMux:
                 model_profile=model_profile,
                 system=system,
                 think=think,
+                timeout=timeout,
+                **options,
             )
         )
 

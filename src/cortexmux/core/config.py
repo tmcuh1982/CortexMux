@@ -57,6 +57,9 @@ class OpenAIConfig(BaseModel):
     enabled: bool = False
     base_url: str = "https://api.openai.com/v1"
     timeout_seconds: float = Field(default=120, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_base_delay_seconds: float = Field(default=0.25, ge=0, le=60)
+    retry_max_delay_seconds: float = Field(default=2, ge=0, le=60)
     api_key: SecretStr | None = Field(default=None, repr=False)
     api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
     defaults: OllamaDefaults = Field(default_factory=OllamaDefaults)

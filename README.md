@@ -8,7 +8,7 @@
 
 CortexMux is a modular, local-first Python library for routing AI tasks across
 language models, vision models, ComfyUI image workflows, and deterministic
-data-analysis engines. Version 0.5.1 is an alpha-quality stable release: its public
+data-analysis engines. Version 0.5.2 is an alpha-quality stable release: its public
 surface is tested, but production deployments should pin the patch version.
 
 ## Features
@@ -76,6 +76,25 @@ default and has no trading or configuration-write capability; see
 
 Structured output accepts `response_model=YourPydanticModel`. Vision accepts a
 path, bytes, or validated base64. Embeddings accept one string or a list.
+
+OpenAI Responses requests keep system instructions separate from user input.
+For GPT-6 Astra, CortexMux defaults to `reasoning_effort="low"`; Standard
+processing can be selected explicitly with `service_tier="default"`:
+
+```python
+with CortexMux.from_env() as mux:
+    response = mux.generate(
+        "Summarize the supplied record.",
+        provider="openai",
+        model="gpt-6-astra",
+        system="Return only facts present in the record.",
+        service_tier="default",
+        timeout=30,
+    )
+```
+
+See [OpenAI provider behavior](docs/providers.md#openai-responses-api) and the
+[0.5.2 migration notes](docs/migration-0.5.2.md).
 
 Ollama reasoning models such as Qwen3 can disable reasoning for reliable
 schema-constrained JSON. CortexMux sends `think` at the `/api/generate` payload

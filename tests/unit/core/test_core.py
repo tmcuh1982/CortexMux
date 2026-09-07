@@ -16,6 +16,7 @@ from cortexmux.core.exceptions import (
     ProviderRegistrationError,
     RemoteHostNotAllowedError,
 )
+from cortexmux.core.json_schema import validate_json_schema
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
 from cortexmux.core.security import safe_output_path, validate_provider_url, validate_web_url
@@ -279,3 +280,14 @@ def test_exception_serialization() -> None:
         "message": "ambiguous",
         "context": {"task": "chat"},
     }
+
+
+@pytest.mark.parametrize("json_type", ["integer", "number"])
+def test_json_schema_numeric_types_reject_booleans(json_type: str) -> None:
+    with pytest.raises(ValueError, match=f"must be {json_type}"):
+        validate_json_schema(True, {"type": json_type})
+
+
+def test_json_schema_rejects_unsupported_validation_keywords() -> None:
+    with pytest.raises(ValueError, match="Unsupported JSON Schema keyword: format"):
+        validate_json_schema("2026-09-07", {"type": "string", "format": "date"})
