@@ -327,3 +327,51 @@ def test_sync_stream_timeout_after_first_delta(settings):
             next(stream)
         stream.close()
     assert any(m.get("method") == "turn/interrupt" for m in messages(settings))
+
+
+async def test_complete_catalog_metadata_and_hidden_model_routing(settings):
+    identifiers = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]
+    catalog = [
+        {
+            "model": identifier,
+            "displayName": identifier.upper(),
+            "hidden": index != 1,
+            "isDefault": index == 1,
+            "defaultReasoningEffort": "low",
+            "supportedReasoningEfforts": [{"reasoningEffort": "low"}],
+        }
+        for index, identifier in enumerate(identifiers)
+    ]
+    settings.auth_directory.mkdir()
+    (settings.auth_directory / "fake-model-catalog.json").write_text(json.dumps(catalog))
+    config = CortexMuxConfig()
+    config.providers.codex = settings
+    config.providers.ollama.enabled = False
+    config.providers.comfyui.enabled = False
+    async with CortexMux(config) as mux:
+        models = await mux.alist_models("codex")
+        assert [model.name for model in models] == identifiers
+        for model, row in zip(models, catalog, strict=True):
+            assert model.metadata == {
+                "display_name": row["displayName"],
+                "hidden": row["hidden"],
+                "is_default": row["isDefault"],
+                "default_reasoning_effort": "low",
+                "reasoning_efforts": "low",
+            }
+            response = await mux.agenerate(
+                "normal", provider="codex", model=model.name, require_no_tools=False
+            )
+            assert response.model == model.name
+        with pytest.raises(ModelNotFoundError):
+            await mux.agenerate("normal", provider="codex", model="unreported-model")
+    calls = [m["params"] for m in messages(settings) if m.get("method") == "model/list"]
+    assert all(call["includeHidden"] is True for call in calls)
+    assert {call["cursor"] for call in calls} == {None, "1", "2", "3"}
+
+
+async def test_catalog_does_not_invent_models_or_missing_metadata(settings):
+    async with CodexProvider(CodexClient(settings)) as provider:
+        models = await provider.list_models()
+    assert [model.name for model in models] == ["test-model"]
+    assert models[0].metadata == {"reasoning_efforts": "low"}

@@ -70,6 +70,16 @@ for line in sys.stdin:
                 {"model": "test-model", "supportedReasoningEfforts": [{"reasoningEffort": "low"}]}
             ]
         }
+        catalog = Path(os.environ["CODEX_HOME"]) / "fake-model-catalog.json"
+        if catalog.exists():
+            rows = json.loads(catalog.read_text())
+            if not params.get("includeHidden", False):
+                rows = [row for row in rows if not row.get("hidden", False)]
+            offset = int(params.get("cursor") or 0)
+            result = {
+                "data": rows[offset : offset + 1],
+                "nextCursor": str(offset + 1) if offset + 1 < len(rows) else None,
+            }
     elif method == "thread/start":
         thread_count += 1
         result = {

@@ -167,7 +167,9 @@ class CodexProvider(BaseProvider):
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(100):
-            data = await self.client.request("model/list", {"cursor": cursor, "limit": 100})
+            data = await self.client.request(
+                "model/list", {"cursor": cursor, "limit": 100, "includeHidden": True}
+            )
             rows = data.get("data")
             if not isinstance(rows, list) or any(
                 not isinstance(row, dict) or not isinstance(row.get("model"), str) for row in rows
@@ -183,20 +185,27 @@ class CodexProvider(BaseProvider):
         raise CodexError("invalid_response")
 
     async def list_models(self) -> list[ModelInfo]:
-        """Discover exact account model identifiers; no OpenAI API model assumptions."""
-        return [
-            ModelInfo(
-                name=row["model"],
-                provider=self.name,
-                metadata={
-                    "reasoning_efforts": ",".join(
-                        entry["reasoningEffort"]
-                        for entry in row.get("supportedReasoningEfforts", [])
-                    )
-                },
-            )
-            for row in await self._models()
-        ]
+        """List the complete reported catalog, preserving picker metadata when supplied."""
+        models: list[ModelInfo] = []
+        for row in await self._models():
+            metadata: dict[str, str | int | float | bool] = {
+                "reasoning_efforts": ",".join(
+                    entry["reasoningEffort"] for entry in row.get("supportedReasoningEfforts", [])
+                )
+            }
+            for source, target in (
+                ("displayName", "display_name"),
+                ("defaultReasoningEffort", "default_reasoning_effort"),
+            ):
+                value = row.get(source)
+                if isinstance(value, str):
+                    metadata[target] = value
+            for source, target in (("hidden", "hidden"), ("isDefault", "is_default")):
+                value = row.get(source)
+                if isinstance(value, bool):
+                    metadata[target] = value
+            models.append(ModelInfo(name=row["model"], provider=self.name, metadata=metadata))
+        return models
 
     async def get_capabilities(self, model: str | None = None) -> list[ProviderCapability]:
         """Declare adapter support and the explicitly unsupported no-tool guarantee."""

@@ -90,7 +90,13 @@ implicit permission escalation.
 - `codex_logout()` and `codex_rate_limits()`: dedicated logout and usage windows.
 - All account operations have an `a`-prefixed asynchronous equivalent.
 - `list_models("codex")`: current catalog with exact identifiers and advertised
-  reasoning efforts. Choose a model explicitly. Unsupported options/efforts and
+  reasoning efforts. Discovery requests `includeHidden=true` on every page.
+  `ModelInfo.name` remains the exact identifier to send for generation.
+  Metadata includes `display_name`, `hidden`, `is_default`, and
+  `default_reasoning_effort` when supplied by Codex. Missing fields stay absent;
+  `hidden=true` means hidden from Codex's default picker, not unavailable for
+  explicit selection. Catalog presence does not guarantee subscription access
+  to a successful generation. Choose a model explicitly. Unsupported options/efforts and
   model substitutions fail before generation. API temperature, token budgets,
   verbosity and service tiers are not assumed to work here.
 - `generate`, `chat`, `structured`, and their asynchronous variants use existing
@@ -137,6 +143,24 @@ Usage windows retain unknown fields as `None`; `used_percent` means consumed,
 Prefer `by_limit_id` when supplied, otherwise `rate_limits`. Subscription limits
 and account eligibility govern usage; API credit balances do not apply.
 
+## Displaying the complete model catalog
+
+After connecting the dedicated account, a consumer can build its selector from:
+
+```python
+for model in mux.list_models("codex"):
+    label = model.metadata.get("display_name", model.name)
+    hidden = model.metadata.get("hidden")  # None means the server did not report it.
+    print(model.name, label, hidden)
+```
+
+Luna (`gpt-5.6-luna`), Terra (`gpt-5.6-terra`), Sol (`gpt-5.6-sol`) and
+Astra (`gpt-6-astra`) appear if this App Server reports them, including hidden
+entries. CortexMux does not hard-code these models or manufacture missing ones.
+Use `is_default` to identify the server's suggested default when it is provided.
+If a model remains absent from the complete catalog, this change does not establish
+whether the cause is the account, the CLI catalog, or a deployment restriction.
+
 ## UniversRobot and release delivery
 
 See [the minimal example](../examples/codex_universrobot.py). UniversRobot must
@@ -145,7 +169,7 @@ install/copy the approved official CortexMux release into
 Do not use an editable install, symlink, `PYTHONPATH` pointing to this checkout,
 or a development-path dependency in UniversRobot.
 
-Candidate version: `0.6.0rc1`. Build a wheel and source archive with
+Candidate version: `0.6.0rc2`. Build a wheel and source archive with
 `python -m build`, then `twine check dist/*`. The existing tag-triggered workflow
 uploads distribution artifacts. This change does not create a tag, publish a
 release or change UniversRobot. Publication requires separate authorization.

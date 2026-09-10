@@ -4,6 +4,15 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc2] - 2026-09-10
+
+### Fixed
+
+- Codex model discovery now includes hidden entries on every catalog page, so
+  reported models remain explicitly selectable regardless of picker visibility.
+- Model metadata preserves Codex display names, visibility, default selection
+  and default reasoning effort when supplied, without adding unreported models.
+
 ## [0.6.0rc1] - 2026-09-10
 
 ### Added
