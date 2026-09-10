@@ -51,6 +51,23 @@ def messages(settings):
     ]
 
 
+def seed_plugin_cache(auth_directory: Path) -> None:
+    cache_path = (
+        auth_directory
+        / "plugins"
+        / "cache"
+        / "openai-curated-remote"
+        / "example"
+        / "0.1.0"
+        / ".codex-plugin"
+    )
+    cache_path.mkdir(parents=True, exist_ok=True)
+    (cache_path / "plugin.json").write_text("{}")
+    (
+        auth_directory / "plugins" / ".remote-plugin-install-staging" / "remote-plugin-bundle-test"
+    ).mkdir(parents=True, exist_ok=True)
+
+
 async def test_interleaved_stream_and_fresh_context(settings, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "SECRET")
     monkeypatch.setenv("CODEX_ACCESS_TOKEN", "SECRET")
@@ -211,6 +228,52 @@ async def test_missing_version_and_personal_config(settings, tmp_path):
                 update={"executable": str(executable), "auth_directory": tmp_path / "other"}
             )
         ).start()
+
+
+async def test_restart_keeps_dedicated_auth_cache_layout(settings):
+    settings.auth_directory.mkdir()
+    seed_plugin_cache(settings.auth_directory)
+    for _ in range(2):
+        async with CodexProvider(CodexClient(settings)) as provider:
+            assert (await provider.healthcheck()).available
+            assert (await provider.execute(request())).content == "answer"
+
+
+async def test_unknown_plugins_root_contents_refused(settings):
+    settings.auth_directory.mkdir()
+    (settings.auth_directory / "plugins" / "custom-plugin-root").mkdir(parents=True)
+    with pytest.raises(CodexError, match="personal_configuration_refused"):
+        async with CodexProvider(CodexClient(settings)) as provider:
+            await provider.account()
+
+
+def test_codex_isolation_overrides_declared():
+    from cortexmux.providers.codex.client import _OVERRIDES
+
+    for key in (
+        "forced_login_method",
+        "cli_auth_credentials_store",
+        "model_provider",
+        "approval_policy",
+        "approvals_reviewer",
+        "sandbox_mode",
+        "web_search",
+        "project_doc_max_bytes",
+        "features.shell_tool",
+        "features.unified_exec",
+        "features.shell_snapshot",
+        "features.apps",
+        "features.hooks",
+        "features.multi_agent",
+        "features.memories",
+        "features.remote_plugin",
+        "mcp_servers",
+    ):
+        assert key in _OVERRIDES
+    assert _OVERRIDES["features.remote_plugin"] == "false"
+    assert _OVERRIDES["features.shell_tool"] == "false"
+    assert _OVERRIDES["features.hooks"] == "false"
+    assert _OVERRIDES["approvals_reviewer"] == '"user"'
 
 
 def test_sync_facade(settings):

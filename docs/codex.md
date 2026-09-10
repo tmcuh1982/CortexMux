@@ -46,9 +46,25 @@ The default auth directory is the platform application-data directory for
 refreshes its own `auth.json`; CortexMux never opens or copies it. Protect this
 directory as credential storage and exclude it from source control and backups
 that are shared publicly. Do not put it inside a repository. The adapter rejects
-`~/.codex`, the parent's `CODEX_HOME`, personal config files, plugins, hooks and
-custom skills in this directory. Codex's automatically generated `.system`
-skills directory is permitted for subsequent starts.
+`~/.codex`, the parent's `CODEX_HOME`, personal config files, and custom
+non-cache plugin/skill payloads in this directory. Codex-generated cache
+artifacts (`plugins/cache`, `plugins/.remote-plugin-install-staging`,
+`plugins/.plugin-appserver`) are accepted for dedicated auth directories when
+their contents remain cache-only.
+
+For each `app-server` process, CortexMux applies the following Codex config
+overrides (verified against local 0.140.0 app-server schema snapshots):
+
+- `approval_policy=never`, `approvals_reviewer=user`
+- `sandbox_mode=read-only`
+- `web_search=disabled`
+- `model_provider=openai`, `forced_login_method=chatgpt`
+- `project_doc_max_bytes=0`
+- `features.shell_tool=false`, `features.unified_exec=false`,
+  `features.shell_snapshot=false`, `features.apps=false`, `features.hooks=false`,
+  `features.multi_agent=false`, `features.memories=false`,
+  `features.remote_plugin=false`
+- `mcp_servers={}`
 
 Use a distinct directory per consuming application. `codex_logout()` clears
 credentials for every process sharing that directory. It does not log out the
@@ -183,3 +199,8 @@ CORTEXMUX_CODEX_AUTH_DIRECTORY=/dedicated/already-connected/home \
 CORTEXMUX_CODEX_MODEL=an-exact-discovered-model \
 pytest -q tests/integration/test_codex_subscription.py
 ```
+
+## Private offline testing
+
+See [the local Codex lab](codex-local-testing.md) to save synthetic or already
+obtained responses outside Git, validate outputs and replay them without Codex.

@@ -39,6 +39,30 @@ _OVERRIDES = {
     "features.remote_plugin": "false",
     "mcp_servers": "{}",
 }
+_SAFE_AUTH_FILES = frozenset({"config.toml", "AGENTS.md", "hooks.json"})
+_SAFE_PLUGIN_ROOT_ENTRIES = frozenset(
+    {
+        ".DS_Store",
+        ".plugin-appserver",
+        ".remote-plugin-install-staging",
+        "cache",
+    }
+)
+
+
+def _is_safe_plugins_root(path: Path) -> tuple[bool, str]:
+    if not path.exists():
+        return True, ""
+    if path.is_symlink() or not path.is_dir():
+        return False, "plugins must be a directory"
+    blocked: list[str] = []
+    for entry in path.iterdir():
+        if entry.name in _SAFE_PLUGIN_ROOT_ENTRIES:
+            continue
+        blocked.append(entry.name)
+    if blocked:
+        return False, "plugins contains non-cache entries: " + ", ".join(sorted(blocked))
+    return True, ""
 
 
 class CodexClient:
@@ -78,14 +102,22 @@ class CodexClient:
             if (auth / "auth.json").is_symlink():
                 raise CodexError("shared_auth_directory_refused")
             # This directory belongs exclusively to the integration. Never read auth.json.
-            if any(
-                (auth / name).exists()
-                for name in ("config.toml", "AGENTS.md", "plugins", "hooks.json")
-            ):
-                raise CodexError("personal_configuration_refused")
+            blocked = [name for name in _SAFE_AUTH_FILES if (auth / name).exists()]
+            if blocked:
+                raise CodexError(
+                    "personal_configuration_refused",
+                    details="Refusing auth directory files: " + ", ".join(sorted(blocked)),
+                )
+            plugins = auth / "plugins"
+            safe, reason = _is_safe_plugins_root(plugins)
+            if not safe:
+                raise CodexError("personal_configuration_refused", details=reason)
             skills = auth / "skills"
             if skills.exists() and any(entry.name != ".system" for entry in skills.iterdir()):
-                raise CodexError("personal_configuration_refused")
+                raise CodexError(
+                    "personal_configuration_refused",
+                    details="Only .system skills are allowed in the auth directory.",
+                )
             auth.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._directory = tempfile.TemporaryDirectory(prefix="cortexmux-codex-")
             self.cwd = self._directory.name

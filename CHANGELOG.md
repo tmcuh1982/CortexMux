@@ -4,6 +4,21 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Private offline Codex lab: typed synthetic/imported cases, local validation
+  reports, exact-output expectations and deterministic `codex-replay` provider.
+- `codex-lab init/add/list/validate` commands with no live network or process use.
+- Storage outside Git, restrictive file modes, bounded files, sanitized errors,
+  and Git/package exclusions for private case data and validation reports.
+
+### Fixed
+
+- Codex startup isolation now accepts dedicated auth directories containing only
+  Codex plugin-cache artifacts (`plugins/cache`, `plugins/.remote-plugin-install-staging`)
+  while still rejecting unknown top-level plugin entries and non-empty personal
+  configuration files.
+
 ## [0.6.0rc2] - 2026-09-10
 
 ### Fixed

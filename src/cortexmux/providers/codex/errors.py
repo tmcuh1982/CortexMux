@@ -8,8 +8,10 @@ from cortexmux.core.exceptions import CortexMuxError, ProviderResponseError
 class CodexError(CortexMuxError):
     """Codex failure with a stable machine-readable reason in context."""
 
-    def __init__(self, reason: str) -> None:
-        super().__init__(f"Codex request failed: {reason}.", provider="codex", reason=reason)
+    def __init__(self, reason: str, **context: object) -> None:
+        super().__init__(
+            f"Codex request failed: {reason}.", provider="codex", reason=reason, **context
+        )
 
 
 def server_error(error: dict[str, Any]) -> CortexMuxError:
