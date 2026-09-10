@@ -117,6 +117,7 @@ class StructuredStreamCompleted(BaseModel):
     model: str | None = None
     content: str
     parsed: Any
+    raw_metadata: dict[str, Any] | None = None
     usage: UsageMetadata | None = None
 
 

@@ -88,3 +88,8 @@ when explicitly enabled. It needs an absolute command, its fixed arguments,
 and bounded request/shutdown timeouts. It does not inherit the parent process
 environment. See [CapitalForge MCP](capitalforge-mcp.md) for the complete
 configuration and read-only safety boundary.
+
+## Codex subscription provider
+
+The opt-in `codex` provider supports ChatGPT-managed login, text/structured
+responses and account limits through local App Server stdio. See [Codex setup and limitations](codex.md).

@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator, Coroutine, Iterator
+from contextlib import aclosing
 from pathlib import Path
 from types import TracebackType
 from typing import Any, TypeVar, cast
@@ -25,6 +26,13 @@ from cortexmux.core.security import validate_provider_url
 from cortexmux.core.types import MessageRole, TaskType
 from cortexmux.mcp import MCPStdioClient
 from cortexmux.providers.base import BaseProvider
+from cortexmux.providers.codex import CodexClient, CodexProvider
+from cortexmux.providers.codex.schemas import (
+    CodexAccount,
+    CodexLogin,
+    CodexLoginResult,
+    CodexRateLimits,
+)
 from cortexmux.providers.comfyui import (
     ComfyUIClient,
     ComfyUIProvider,
@@ -53,6 +61,7 @@ from cortexmux.schemas.responses import (
     DataAnalysisResponse,
     EmbeddingResponse,
     ImageGenerationResponse,
+    StreamEvent,
     StructuredResponse,
     StructuredStreamChunk,
     StructuredStreamCompleted,
@@ -158,6 +167,8 @@ class CortexMux:
                     )
                 )
             )
+        if self.config.providers.codex.enabled:
+            self.registry.register(CodexProvider(CodexClient(self.config.providers.codex)))
         if self.config.providers.comfyui.enabled:
             comfyui_settings = self.config.providers.comfyui
             url = validate_provider_url(
@@ -189,6 +200,60 @@ class CortexMux:
             )
         )
 
+    def _codex(self) -> CodexProvider:
+        provider = self.registry.get("codex")
+        if not isinstance(provider, CodexProvider):
+            raise ConfigurationError("The built-in Codex provider is required.")
+        return provider
+
+    async def acodex_account(self) -> CodexAccount:
+        """Read Codex account status without exposing credentials."""
+        return await self._codex().account()
+
+    def codex_account(self) -> CodexAccount:
+        """Read Codex account status without exposing credentials."""
+        return self._sync(self.acodex_account())
+
+    async def acodex_login_start(self, *, device_code: bool = False) -> CodexLogin:
+        """Begin the application-presented ChatGPT login."""
+        return await self._codex().login_start(device_code=device_code)
+
+    def codex_login_start(self, *, device_code: bool = False) -> CodexLogin:
+        """Begin the application-presented ChatGPT login."""
+        return self._sync(self.acodex_login_start(device_code=device_code))
+
+    async def acodex_login_result(self, login_id: str, *, timeout: float = 300) -> CodexLoginResult:
+        """Wait for a sanitized Codex login result."""
+        return await self._codex().login_result(login_id, timeout=timeout)
+
+    def codex_login_result(self, login_id: str, *, timeout: float = 300) -> CodexLoginResult:
+        """Wait for a sanitized Codex login result."""
+        return self._sync(self.acodex_login_result(login_id, timeout=timeout))
+
+    async def acodex_login_cancel(self, login_id: str) -> None:
+        """Cancel a pending Codex login."""
+        return await self._codex().login_cancel(login_id)
+
+    def codex_login_cancel(self, login_id: str) -> None:
+        """Cancel a pending Codex login."""
+        return self._sync(self.acodex_login_cancel(login_id))
+
+    async def acodex_logout(self) -> None:
+        """Sign out only the dedicated CortexMux Codex home."""
+        return await self._codex().logout()
+
+    def codex_logout(self) -> None:
+        """Sign out only the dedicated CortexMux Codex home."""
+        return self._sync(self.acodex_logout())
+
+    async def acodex_rate_limits(self) -> CodexRateLimits:
+        """Read subscription limits without inferred costs."""
+        return await self._codex().rate_limits()
+
+    def codex_rate_limits(self) -> CodexRateLimits:
+        """Read subscription limits without inferred costs."""
+        return self._sync(self.acodex_rate_limits())
+
     async def _execute_nested(self, request: CortexRequest) -> CortexResponse:
         """Route internal model requests through the same validation policy."""
         return await self.router.route(request)
@@ -215,6 +280,25 @@ class CortexMux:
     def run(self, request: CortexRequest | TaskType | str, **fields: Any) -> CortexResponse:
         """Validate and execute a generic synchronous request."""
         return self._sync(self.arun(request, **fields))
+
+    async def astream(self, request: CortexRequest) -> AsyncGenerator[StreamEvent, None]:
+        """Stream a typed request; close the iterator on early consumer exit."""
+        async with aclosing(self.router.stream(request)) as stream:
+            async for event in stream:
+                yield event
+
+    def stream(self, request: CortexRequest) -> Iterator[StreamEvent]:
+        """Stream a typed request using this facade's shared synchronous runner."""
+        self._ensure_sync_context()
+        stream = self.astream(request)
+        try:
+            while True:
+                try:
+                    yield self._sync(_next_generic_event(stream))
+                except StopAsyncIteration:
+                    return
+        finally:
+            self._sync(stream.aclose())
 
     async def agenerate(
         self,
@@ -445,6 +529,8 @@ class CortexMux:
         model_profile: str | None = None,
         system: str | None = None,
         think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
     ) -> AsyncGenerator[StructuredStreamEvent, None]:
         """Stream draft JSON fragments, then emit one fully validated result."""
         schema = response_model.model_json_schema() if response_model else json_schema
@@ -456,29 +542,32 @@ class CortexMux:
             json_schema=schema,
             system=system,
             think=think,
+            timeout=timeout,
+            options=options,
         )
-        async for event in self.router.stream(request):
-            if isinstance(event, StructuredStreamChunk):
-                yield event
-                continue
-            if not isinstance(event, StructuredStreamCompleted):
-                raise ProviderResponseError(
-                    "Provider returned an invalid structured stream event.",
-                    provider=event.provider,
-                    request_id=event.request_id,
-                )
-            if response_model is not None:
-                try:
-                    parsed = response_model.model_validate(event.parsed)
-                except ValueError as exc:
-                    raise StructuredOutputValidationError(
-                        "The completed structured output does not match the response model.",
+        async with aclosing(self.router.stream(request)) as stream:
+            async for event in stream:
+                if isinstance(event, StructuredStreamChunk):
+                    yield event
+                    continue
+                if not isinstance(event, StructuredStreamCompleted):
+                    raise ProviderResponseError(
+                        "Provider returned an invalid structured stream event.",
                         provider=event.provider,
                         request_id=event.request_id,
-                        safe_excerpt=_safe_excerpt(event.content),
-                    ) from exc
-                event = event.model_copy(update={"parsed": parsed})
-            yield event
+                    )
+                if response_model is not None:
+                    try:
+                        parsed = response_model.model_validate(event.parsed)
+                    except ValueError as exc:
+                        raise StructuredOutputValidationError(
+                            "The completed structured output does not match the response model.",
+                            provider=event.provider,
+                            request_id=event.request_id,
+                            safe_excerpt=_safe_excerpt(event.content),
+                        ) from exc
+                    event = event.model_copy(update={"parsed": parsed})
+                yield event
 
     def stream_structured(
         self,
@@ -491,6 +580,8 @@ class CortexMux:
         model_profile: str | None = None,
         system: str | None = None,
         think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
     ) -> Iterator[StructuredStreamEvent]:
         """Synchronously stream draft JSON fragments and one validated result."""
         self._ensure_sync_context()
@@ -503,6 +594,8 @@ class CortexMux:
             model_profile=model_profile,
             system=system,
             think=think,
+            timeout=timeout,
+            **options,
         )
         return self._iterate_sync_stream(stream)
 
@@ -984,3 +1077,7 @@ def _web_extraction_prompt(
         content = content[: -(len(prompt) - maximum_characters)]
         prompt = build(content)
     return prompt, len(content) < len(page.text)
+
+
+async def _next_generic_event(stream: AsyncGenerator[StreamEvent, None]) -> StreamEvent:
+    return await anext(stream)

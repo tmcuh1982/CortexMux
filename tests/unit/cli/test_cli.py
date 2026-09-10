@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from cortexmux import CortexMux
+from cortexmux import CortexMux, __version__
 from cortexmux.cli.main import app
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.common import ImageArtifact, ModelInfo
@@ -27,7 +27,7 @@ runner = CliRunner()
 def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "0.5.2" in result.stdout
+    assert result.stdout.strip() == __version__
 
 
 def test_doctor_without_network_providers(tmp_path: Path) -> None:

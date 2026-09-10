@@ -4,6 +4,31 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc1] - 2026-09-10
+
+### Added
+
+- Opt-in `codex` subscription provider using local App Server stdio, with
+  managed ChatGPT/browser or device login, sanitized account state and limits.
+- Version-pinned CLI 0.140.0 protocol, bounded process lifecycle, correlated
+  notifications, cancellation, fresh contexts and explicit persistent threads.
+- Codex text/chat/JSON Schema generation, local JSON validation, streaming and
+  exact model/effort discovery without API-key fallback or inferred costs.
+- Generic sync/async facade streams and structured completion correlation metadata.
+- Offline fake-process regression coverage, opt-in live subscription test,
+  isolation documentation and release-only UniversRobot example.
+
+### Security
+
+- Dedicated auth directory, filtered process environment, restrictive settings,
+  no automatic approvals, no raw server diagnostics or token propagation.
+- Strict no-tool guarantee explicitly unsupported: requests require it by default
+  and fail closed unless the caller explicitly accepts sandbox limitations.
+
+### Fixed
+
+- Router streaming closes provider iterators when consumers stop early.
+
 ## [0.5.2] - 2026-09-07
 
 ### Added

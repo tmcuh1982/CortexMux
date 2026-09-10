@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from time import perf_counter
 
@@ -114,13 +114,19 @@ class Router:
         )
         return response
 
-    async def stream(self, request: CortexRequest) -> AsyncIterator[StreamEvent]:
+    async def stream(self, request: CortexRequest) -> AsyncGenerator[StreamEvent, None]:
         """Select a provider/model and stream a normalized request."""
         provider, model, reason = self.select(request)
         await self._ensure_model_is_available(provider, model, request)
         selected_request = self._selected_request(request, provider, model, reason)
-        async for event in provider.stream(selected_request):
-            yield event
+        stream = provider.stream(selected_request)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
 
     def _selected_request(
         self,

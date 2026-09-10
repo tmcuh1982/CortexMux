@@ -310,3 +310,8 @@ twine check dist/*
 
 See [CONTRIBUTING](CONTRIBUTING.md), [ROADMAP](ROADMAP.md), and
 [CHANGELOG](CHANGELOG.md). CortexMux is available under the [MIT License](LICENSE).
+
+## Codex subscription provider
+
+The opt-in `codex` provider supports ChatGPT-managed login, text/structured
+responses and account limits through local App Server stdio. See [Codex setup and limitations](docs/codex.md).

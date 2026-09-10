@@ -82,3 +82,8 @@ No other keyword is claimed or silently ignored. Unsupported keywords such as
 `format`, `multipleOf`, `contains`, conditional schemas, tuple/prefix items,
 unevaluated properties/items, pattern properties, and remote references are
 rejected explicitly. JSON booleans never satisfy `integer` or `number`.
+
+## Codex subscription provider
+
+The opt-in `codex` provider supports ChatGPT-managed login, text/structured
+responses and account limits through local App Server stdio. See [Codex setup and limitations](codex.md).

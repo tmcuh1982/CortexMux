@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 from cortexmux.core.exceptions import ConfigurationError
 from cortexmux.core.types import TaskType
 from cortexmux.mcp.schemas import MCPServerConfig
+from cortexmux.providers.codex.schemas import CodexConfig
 
 
 class CoreConfig(BaseModel):
@@ -105,6 +106,7 @@ class ProvidersConfig(BaseModel):
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    codex: CodexConfig = Field(default_factory=CodexConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
 
 
