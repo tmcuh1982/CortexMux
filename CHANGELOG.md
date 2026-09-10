@@ -4,13 +4,7 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
-### Added
-
-- Private offline Codex lab: typed synthetic/imported cases, local validation
-  reports, exact-output expectations and deterministic `codex-replay` provider.
-- `codex-lab init/add/list/validate` commands with no live network or process use.
-- Storage outside Git, restrictive file modes, bounded files, sanitized errors,
-  and Git/package exclusions for private case data and validation reports.
+## [0.6.0rc3] - 2026-09-10
 
 ### Fixed
 
