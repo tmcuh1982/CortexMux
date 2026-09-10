@@ -12,6 +12,9 @@ All notable changes follow Keep a Changelog conventions.
   Codex plugin-cache artifacts (`plugins/cache`, `plugins/.remote-plugin-install-staging`)
   while still rejecting unknown top-level plugin entries and non-empty personal
   configuration files.
+- Plugin synchronization, loading, sharing, and dependency installation are
+  explicitly disabled. Cache trees reject symbolic links and special files, and
+  the auth directory is revalidated before every request.
 
 ## [0.6.0rc2] - 2026-09-10
 

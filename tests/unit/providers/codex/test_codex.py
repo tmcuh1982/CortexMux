@@ -247,6 +247,41 @@ async def test_unknown_plugins_root_contents_refused(settings):
             await provider.account()
 
 
+@pytest.mark.parametrize("link_location", ["auth", "plugins", "cache", "nested"])
+async def test_plugin_cache_symlinks_refused(settings, tmp_path, link_location):
+    target = tmp_path / "outside-auth"
+    target.mkdir()
+    if link_location == "auth":
+        settings.auth_directory.symlink_to(target, target_is_directory=True)
+        expected_reason = "shared_auth_directory_refused"
+    elif link_location == "plugins":
+        settings.auth_directory.mkdir()
+        (settings.auth_directory / "plugins").symlink_to(target, target_is_directory=True)
+        expected_reason = "personal_configuration_refused"
+    elif link_location == "cache":
+        settings.auth_directory.mkdir()
+        plugins = settings.auth_directory / "plugins"
+        plugins.mkdir()
+        (plugins / "cache").symlink_to(target, target_is_directory=True)
+        expected_reason = "personal_configuration_refused"
+    else:
+        settings.auth_directory.mkdir()
+        cache = settings.auth_directory / "plugins" / "cache"
+        cache.mkdir(parents=True)
+        (cache / "external").symlink_to(target, target_is_directory=True)
+        expected_reason = "personal_configuration_refused"
+    with pytest.raises(CodexError, match=expected_reason):
+        await CodexClient(settings).start()
+
+
+async def test_configuration_added_after_start_is_refused(settings):
+    async with CodexProvider(CodexClient(settings)) as provider:
+        assert (await provider.execute(request())).content == "answer"
+        (settings.auth_directory / "hooks.json").write_text("{}")
+        with pytest.raises(CodexError, match="personal_configuration_refused"):
+            await provider.execute(request())
+
+
 def test_codex_isolation_overrides_declared():
     from cortexmux.providers.codex.client import _OVERRIDES
 
@@ -266,11 +301,17 @@ def test_codex_isolation_overrides_declared():
         "features.hooks",
         "features.multi_agent",
         "features.memories",
+        "features.plugins",
+        "features.plugin_sharing",
         "features.remote_plugin",
+        "features.skill_mcp_dependency_install",
         "mcp_servers",
     ):
         assert key in _OVERRIDES
     assert _OVERRIDES["features.remote_plugin"] == "false"
+    assert _OVERRIDES["features.plugins"] == "false"
+    assert _OVERRIDES["features.plugin_sharing"] == "false"
+    assert _OVERRIDES["features.skill_mcp_dependency_install"] == "false"
     assert _OVERRIDES["features.shell_tool"] == "false"
     assert _OVERRIDES["features.hooks"] == "false"
     assert _OVERRIDES["approvals_reviewer"] == '"user"'

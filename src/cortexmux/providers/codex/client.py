@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -36,7 +37,10 @@ _OVERRIDES = {
     "features.hooks": "false",
     "features.multi_agent": "false",
     "features.memories": "false",
+    "features.plugins": "false",
+    "features.plugin_sharing": "false",
     "features.remote_plugin": "false",
+    "features.skill_mcp_dependency_install": "false",
     "mcp_servers": "{}",
 }
 _SAFE_AUTH_FILES = frozenset({"config.toml", "AGENTS.md", "hooks.json"})
@@ -50,19 +54,78 @@ _SAFE_PLUGIN_ROOT_ENTRIES = frozenset(
 )
 
 
+def _is_safe_cache_tree(path: Path) -> tuple[bool, str]:
+    try:
+        for root, directories, files in os.walk(path, followlinks=False):
+            for name in directories + files:
+                entry = Path(root) / name
+                if entry.is_symlink():
+                    return False, f"plugin cache contains a symbolic link: {entry.name}"
+                mode = entry.stat(follow_symlinks=False).st_mode
+                if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                    return False, f"plugin cache contains a special file: {entry.name}"
+    except OSError:
+        return False, "plugin cache could not be safely inspected"
+    return True, ""
+
+
 def _is_safe_plugins_root(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return True, ""
     if path.is_symlink() or not path.is_dir():
         return False, "plugins must be a directory"
     blocked: list[str] = []
-    for entry in path.iterdir():
-        if entry.name in _SAFE_PLUGIN_ROOT_ENTRIES:
+    try:
+        entries = list(path.iterdir())
+    except OSError:
+        return False, "plugins could not be safely inspected"
+    for entry in entries:
+        if entry.name not in _SAFE_PLUGIN_ROOT_ENTRIES:
+            blocked.append(entry.name)
             continue
-        blocked.append(entry.name)
+        if entry.is_symlink():
+            return False, f"plugins contains a symbolic link: {entry.name}"
+        if entry.name == ".DS_Store":
+            if not entry.is_file():
+                return False, ".DS_Store must be a regular file"
+            continue
+        if not entry.is_dir():
+            return False, f"plugin cache entry must be a directory: {entry.name}"
+        safe, reason = _is_safe_cache_tree(entry)
+        if not safe:
+            return safe, reason
     if blocked:
         return False, "plugins contains non-cache entries: " + ", ".join(sorted(blocked))
     return True, ""
+
+
+def _validate_auth_directory(auth: Path) -> None:
+    blocked = [
+        name for name in _SAFE_AUTH_FILES if (auth / name).exists() or (auth / name).is_symlink()
+    ]
+    if blocked:
+        raise CodexError(
+            "personal_configuration_refused",
+            details="Refusing auth directory files: " + ", ".join(sorted(blocked)),
+        )
+    safe, reason = _is_safe_plugins_root(auth / "plugins")
+    if not safe:
+        raise CodexError("personal_configuration_refused", details=reason)
+    skills = auth / "skills"
+    if skills.is_symlink():
+        raise CodexError(
+            "personal_configuration_refused",
+            details="skills must be a directory, not a symbolic link.",
+        )
+    if skills.exists():
+        if not skills.is_dir() or any(entry.name != ".system" for entry in skills.iterdir()):
+            raise CodexError(
+                "personal_configuration_refused",
+                details="Only .system skills are allowed in the auth directory.",
+            )
+        safe, reason = _is_safe_cache_tree(skills)
+        if not safe:
+            raise CodexError("personal_configuration_refused", details=reason)
 
 
 class CodexClient:
@@ -80,6 +143,7 @@ class CodexClient:
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._directory: tempfile.TemporaryDirectory[str] | None = None
+        self._auth_directory: Path | None = None
         self._closed = False
         self._failure: CortexMuxError | None = None
 
@@ -95,30 +159,19 @@ class CodexClient:
             executable = shutil.which(self.config.executable)
             if executable is None:
                 raise CodexError("executable_missing")
-            auth = self.config.auth_directory.expanduser().resolve()
+            configured_auth = self.config.auth_directory.expanduser()
+            if configured_auth.is_symlink():
+                raise CodexError("shared_auth_directory_refused")
+            auth = configured_auth.resolve()
             personal = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).resolve()
             if auth == personal or auth == (Path.home() / ".codex").resolve():
                 raise CodexError("shared_auth_directory_refused")
             if (auth / "auth.json").is_symlink():
                 raise CodexError("shared_auth_directory_refused")
             # This directory belongs exclusively to the integration. Never read auth.json.
-            blocked = [name for name in _SAFE_AUTH_FILES if (auth / name).exists()]
-            if blocked:
-                raise CodexError(
-                    "personal_configuration_refused",
-                    details="Refusing auth directory files: " + ", ".join(sorted(blocked)),
-                )
-            plugins = auth / "plugins"
-            safe, reason = _is_safe_plugins_root(plugins)
-            if not safe:
-                raise CodexError("personal_configuration_refused", details=reason)
-            skills = auth / "skills"
-            if skills.exists() and any(entry.name != ".system" for entry in skills.iterdir()):
-                raise CodexError(
-                    "personal_configuration_refused",
-                    details="Only .system skills are allowed in the auth directory.",
-                )
             auth.mkdir(parents=True, exist_ok=True, mode=0o700)
+            _validate_auth_directory(auth)
+            self._auth_directory = auth
             self._directory = tempfile.TemporaryDirectory(prefix="cortexmux-codex-")
             self.cwd = self._directory.name
             # Do not inherit API keys, endpoint overrides, MCP, or workload identity.
@@ -184,6 +237,14 @@ class CodexClient:
     ) -> dict[str, Any]:
         """Send one correlated request; never retry an ambiguous operation."""
         await self.start()
+        configured_auth = self.config.auth_directory.expanduser()
+        if (
+            configured_auth.is_symlink()
+            or self._auth_directory is None
+            or configured_auth.resolve() != self._auth_directory
+        ):
+            raise CodexError("shared_auth_directory_refused")
+        _validate_auth_directory(self._auth_directory)
         return await self._request(method, params or {}, timeout or self.config.timeout_seconds)
 
     async def _request(self, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:

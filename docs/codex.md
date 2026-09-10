@@ -47,10 +47,13 @@ refreshes its own `auth.json`; CortexMux never opens or copies it. Protect this
 directory as credential storage and exclude it from source control and backups
 that are shared publicly. Do not put it inside a repository. The adapter rejects
 `~/.codex`, the parent's `CODEX_HOME`, personal config files, and custom
-non-cache plugin/skill payloads in this directory. Codex-generated cache
-artifacts (`plugins/cache`, `plugins/.remote-plugin-install-staging`,
-`plugins/.plugin-appserver`) are accepted for dedicated auth directories when
-their contents remain cache-only.
+non-cache plugin/skill payloads in this directory. Recognized cache envelopes
+(`plugins/cache`, `plugins/.remote-plugin-install-staging`,
+`plugins/.plugin-appserver`) are accepted for dedicated auth directories only
+when they contain regular files and directories. Symbolic links, special files,
+and every other top-level plugin entry are refused. CortexMux does not infer
+provenance or trust the manifests inside a cache; it disables plugin loading and
+revalidates the directory before every request.
 
 For each `app-server` process, CortexMux applies the following Codex config
 overrides (verified against local 0.140.0 app-server schema snapshots):
@@ -63,8 +66,20 @@ overrides (verified against local 0.140.0 app-server schema snapshots):
 - `features.shell_tool=false`, `features.unified_exec=false`,
   `features.shell_snapshot=false`, `features.apps=false`, `features.hooks=false`,
   `features.multi_agent=false`, `features.memories=false`,
-  `features.remote_plugin=false`
+  `features.plugins=false`, `features.plugin_sharing=false`,
+  `features.remote_plugin=false`, `features.skill_mcp_dependency_install=false`
 - `mcp_servers={}`
+
+Codex CLI 0.140.0 exposes these feature names through `codex features list`, and
+documents `--disable FEATURE` as equivalent to `-c features.FEATURE=false` in
+`codex app-server --help`. A clean-home process probe observed
+`.tmp/plugins.sync.lock` appear during `initialize` with the default plugin
+feature enabled. The lock did not appear when `plugins`, `remote_plugin`,
+`plugin_sharing`, and `skill_mcp_dependency_install` were disabled; a later
+`account/read` did not change either result. The previously observed populated
+remote cache is therefore consistent with App Server plugin synchronization at
+initialization, rather than generation. The unauthenticated probe did not fetch
+a populated remote cache and does not claim to establish its server-side source.
 
 Use a distinct directory per consuming application. `codex_logout()` clears
 credentials for every process sharing that directory. It does not log out the
@@ -78,8 +93,9 @@ The child uses a fresh temporary working directory, a small environment allowlis
 OpenAI provider selection, `forced_login_method=chatgpt`, read-only sandbox,
 network-disabled command sandbox, `approval_policy=never` and user reviewer.
 Project documents, shell execution, shell snapshots, web search, apps, hooks,
-remote plugins, memories, and multi-agent features are disabled through explicit
-settings. No custom MCP servers are configured. Thread creation verifies the
+plugin loading/sharing/dependency installation, remote plugins, memories, and
+multi-agent features are disabled through explicit settings. No custom MCP
+servers are configured. Thread creation verifies the
 returned sandbox, provider, reviewer, model and absence of instruction sources.
 Every server-initiated permission/tool request is rejected, and unexpected tool
 items fail the generation. No shell command is constructed or approved.
@@ -185,10 +201,10 @@ install/copy the approved official CortexMux release into
 Do not use an editable install, symlink, `PYTHONPATH` pointing to this checkout,
 or a development-path dependency in UniversRobot.
 
-Candidate version: `0.6.0rc2`. Build a wheel and source archive with
+Candidate version: `0.6.0rc3`. Build a wheel and source archive with
 `python -m build`, then `twine check dist/*`. The existing tag-triggered workflow
-uploads distribution artifacts. This change does not create a tag, publish a
-release or change UniversRobot. Publication requires separate authorization.
+uploads distribution artifacts. UniversRobot remains unchanged and consumes the
+published artifacts through its existing release process.
 
 Offline tests use a fake executable with the same JSONL lifecycle. Optional live
 test (uses subscription quota; never enabled by default):
