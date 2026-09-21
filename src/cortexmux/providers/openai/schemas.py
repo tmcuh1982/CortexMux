@@ -57,6 +57,9 @@ class OpenAIModelCapabilities(BaseModel):
 
     reasoning_efforts: frozenset[OpenAIReasoningEffort]
     default_reasoning_effort: OpenAIReasoningEffort | None = None
+    async_session: bool = False
+    mid_turn_steering: bool = False
+    reasoning_updates: bool = False
 
 
 _GENERAL_REASONING = frozenset(OpenAIReasoningEffort)
@@ -72,6 +75,9 @@ _MODEL_CAPABILITIES = {
             }
         ),
         default_reasoning_effort=OpenAIReasoningEffort.LOW,
+        async_session=True,
+        mid_turn_steering=True,
+        reasoning_updates=True,
     )
 }
 _DEFAULT_CAPABILITIES = OpenAIModelCapabilities(reasoning_efforts=_GENERAL_REASONING)

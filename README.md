@@ -18,6 +18,7 @@ surface is tested, but production deployments should pin the patch version.
   JSON/YAML recommendation manifests.
 - Native Ollama text, chat, JSON, vision, embedding, and incremental streaming.
 - Explicit opt-in OpenAI Responses API text, chat, and structured output.
+- Opt-in asynchronous OpenAI Responses sessions with function tools and live steering.
 - Native ComfyUI workflow catalogs, typed progress, binding, queueing, and safe downloads.
 - Safe Pandas analysis plus optional Polars and DuckDB loading.
 - Whitelisted analysis plans and bounded structured results.
@@ -44,11 +45,12 @@ the user.
 
 ```bash
 python -m pip install cortexmux
+python -m pip install "cortexmux[openai]"
 python -m pip install "cortexmux[data,visualization]"
 python -m pip install "cortexmux[all]"
 ```
 
-Extras are `comfyui`, `data`, `polars`, `duckdb`, `excel`, `visualization`,
+Extras are `openai`, `comfyui`, `data`, `polars`, `duckdb`, `excel`, `visualization`,
 `yaml`, `all`, and `dev`. Optional packages are imported only when their feature
 is used.
 
@@ -95,6 +97,33 @@ with CortexMux.from_env() as mux:
 
 See [OpenAI provider behavior](docs/providers.md#openai-responses-api) and the
 [0.5.2 migration notes](docs/migration-0.5.2.md).
+
+For a conversation that can receive tool results and user corrections while it
+runs, use the asynchronous Responses session:
+
+```python
+import asyncio
+
+from cortexmux import CortexMux
+
+
+async def main() -> None:
+    async with CortexMux.from_env() as mux:
+        async with mux.openai_async_session(model="gpt-6-astra") as session:
+            await session.start("Draft a short plan.")
+            while True:
+                event = await session.next_event()
+                if event.response is not None:
+                    print(event.response.content)
+                    break
+
+
+asyncio.run(main())
+```
+
+OpenAI must be enabled with an approved endpoint and API key. See the
+[asynchronous session reference](docs/providers.md#asynchronous-openai-websocket-sessions)
+for parameters, tool results, steering, and reasoning updates.
 
 Ollama reasoning models such as Qwen3 can disable reasoning for reliable
 schema-constrained JSON. CortexMux sends `think` at the `/api/generate` payload
@@ -315,3 +344,5 @@ See [CONTRIBUTING](CONTRIBUTING.md), [ROADMAP](ROADMAP.md), and
 
 The opt-in `codex` provider supports ChatGPT-managed login, text/structured
 responses and account limits through local App Server stdio. See [Codex setup and limitations](docs/codex.md).
+
+For private response fixtures and offline replay, see [Codex local testing](docs/codex-local-testing.md).

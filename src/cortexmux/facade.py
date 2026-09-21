@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import AsyncGenerator, Coroutine, Iterator
-from contextlib import aclosing
+from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Iterator
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from types import TracebackType
 from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
 
+from cortexmux.core.capabilities import ProviderCapability, TemperatureRange, TemperatureSetting
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import (
     ConfigurationError,
@@ -41,7 +42,13 @@ from cortexmux.providers.comfyui import (
 )
 from cortexmux.providers.data import DataAnalysisProvider, MathVerifier
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
-from cortexmux.providers.openai import OpenAIClient, OpenAIProvider
+from cortexmux.providers.openai import (
+    OpenAIAsyncSession,
+    OpenAIClient,
+    OpenAIFunctionTool,
+    OpenAIProvider,
+    OpenAIReasoningEffort,
+)
 from cortexmux.schemas.calculations import CalculationClaim, CalculationVerification
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
 from cortexmux.schemas.progress import ProgressCallback
@@ -105,6 +112,46 @@ class CortexMux:
     ) -> CortexMux:
         """Construct from TOML, environment variables, and explicit overrides."""
         return cls(CortexMuxConfig.load(path=config_path, overrides=overrides))
+
+    @asynccontextmanager
+    async def openai_async_session(
+        self,
+        *,
+        model: str = "gpt-6-astra",
+        instructions: str | None = None,
+        tools: list[OpenAIFunctionTool] | None = None,
+        reasoning_effort: OpenAIReasoningEffort | str | None = None,
+    ) -> AsyncIterator[OpenAIAsyncSession]:
+        """Open an asynchronous Responses session for a supported OpenAI model."""
+        settings = self.config.providers.openai
+        if not settings.enabled:
+            raise ConfigurationError("OpenAI is disabled.", provider="openai")
+        base_url = validate_provider_url(
+            settings.base_url,
+            allow_remote_hosts=self.config.core.allow_remote_hosts,
+            approved_hosts=self.config.core.approved_hosts,
+        )
+        api_key = (
+            settings.api_key.get_secret_value()
+            if settings.api_key is not None
+            else os.environ.get(settings.api_key_env)
+        )
+        if not api_key:
+            raise ConfigurationError(
+                "OpenAI is enabled but its API key is unavailable.",
+                environment_variable=settings.api_key_env,
+            )
+        session = OpenAIAsyncSession(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            instructions=instructions,
+            tools=tools,
+            reasoning_effort=reasoning_effort,
+            timeout=settings.timeout_seconds,
+        )
+        async with session:
+            yield session
 
     def _register_builtins(self) -> None:
         core = self.config.core
@@ -261,6 +308,71 @@ class CortexMux:
     def register_provider(self, provider: BaseProvider, *, replace: bool = False) -> None:
         """Register a custom provider on this facade instance."""
         self.registry.register(provider, replace=replace)
+
+    async def aset_temperature(
+        self,
+        temperature: float,
+        *,
+        provider: str,
+        model: str,
+    ) -> TemperatureSetting:
+        """Set a validated default temperature for one provider/model pair."""
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
+            raise InvalidRequestError(
+                "Temperature must be a finite number.", provider=provider, model=model
+            )
+        if not provider or not model:
+            raise InvalidRequestError(
+                "Provider and model are required to set temperature.",
+                provider=provider or None,
+                model=model or None,
+            )
+        provider_instance = self.registry.get(provider)
+        capabilities = await provider_instance.get_capabilities(model)
+        temperature_range = _temperature_range_for(capabilities, model)
+        if temperature_range is None:
+            raise InvalidRequestError(
+                "The provider/model does not declare temperature support.",
+                provider=provider,
+                model=model,
+            )
+        value = float(temperature)
+        if not temperature_range.minimum <= value <= temperature_range.maximum:
+            raise InvalidRequestError(
+                "Temperature is outside the provider/model range.",
+                provider=provider,
+                model=model,
+                temperature=value,
+                minimum=temperature_range.minimum,
+                maximum=temperature_range.maximum,
+            )
+        setting = TemperatureSetting(
+            provider=provider,
+            model=model,
+            value=value,
+            minimum=temperature_range.minimum,
+            maximum=temperature_range.maximum,
+        )
+        self.router.set_temperature(setting)
+        return setting
+
+    def set_temperature(
+        self,
+        temperature: float,
+        *,
+        provider: str,
+        model: str,
+    ) -> TemperatureSetting:
+        """Set a validated default temperature for one provider/model pair."""
+        return self._sync(self.aset_temperature(temperature, provider=provider, model=model))
+
+    def clear_temperature(self, *, provider: str, model: str) -> None:
+        """Remove the instance-level default temperature for a provider/model pair."""
+        self.router.clear_temperature(provider=provider, model=model)
+
+    def temperature_setting(self, *, provider: str, model: str) -> TemperatureSetting | None:
+        """Return the current instance-level temperature default, if configured."""
+        return self.router.temperature_setting(provider=provider, model=model)
 
     async def aqualify_models(self, suite: QualificationSuite) -> QualificationManifest:
         """Benchmark configured provider/model combinations asynchronously."""
@@ -1025,6 +1137,24 @@ def _request_for(task: TaskType | str, fields: dict[str, Any]) -> CortexRequest:
         return classes[task_type].model_validate({"task": task_type, **fields})
     except ValueError as exc:
         raise InvalidRequestError("Request validation failed.", task=task_type.value) from exc
+
+
+def _temperature_range_for(
+    capabilities: list[ProviderCapability], model: str
+) -> TemperatureRange | None:
+    """Select a consistent temperature range for the requested model."""
+    ranges = {
+        capability.temperature
+        for capability in capabilities
+        if capability.temperature is not None and capability.model in {None, model}
+    }
+    if not ranges:
+        return None
+    if len(ranges) != 1:
+        raise ProviderResponseError(
+            "Provider returned conflicting temperature capabilities.", model=model
+        )
+    return next(iter(ranges))
 
 
 async def _next_stream_event(

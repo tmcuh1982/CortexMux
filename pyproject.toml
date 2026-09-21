@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cortexmux"
-version = "0.6.0rc3"
+version = "0.6.0rc4"
 description = "A modular, local-first router for AI and deterministic data-analysis tasks."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+openai = ["openai[realtime]>=3.8.0,<4"]
 comfyui = ["websockets>=12,<16"]
 data = ["numpy>=1.26", "pandas>=2.2"]
 polars = ["numpy>=1.26", "pandas>=2.2", "polars>=1.0"]
@@ -37,7 +38,7 @@ excel = ["openpyxl>=3.1"]
 visualization = ["matplotlib>=3.8"]
 yaml = ["PyYAML>=6,<7"]
 all = [
-  "cortexmux[comfyui,data,polars,duckdb,excel,visualization,yaml]",
+  "cortexmux[openai,comfyui,data,polars,duckdb,excel,visualization,yaml]",
 ]
 dev = [
   "build>=1.2",
@@ -54,6 +55,9 @@ dev = [
 
 [project.scripts]
 cortexmux = "cortexmux.cli.main:app"
+
+[tool.hatch.build]
+exclude = ["**/*.codex-case.json", "**/*.codex-validation.json", ".cortexmux-private/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cortexmux"]
@@ -85,6 +89,7 @@ module = [
   "polars.*",
   "duckdb.*",
   "matplotlib.*",
+  "openai.*",
   "websockets.*",
   "yaml.*",
 ]

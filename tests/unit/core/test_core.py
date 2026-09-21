@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from cortexmux.core.capabilities import ProviderCapability, TemperatureRange
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import (
     InvalidRequestError,
@@ -24,6 +25,21 @@ from cortexmux.core.types import TaskType
 from cortexmux.facade import CortexMux
 from cortexmux.schemas.requests import TextGenerationRequest
 from tests.conftest import StubProvider
+
+
+class TemperatureProvider(StubProvider):
+    """Provider double exposing model-specific sampling bounds."""
+
+    async def get_capabilities(self, model: str | None = None) -> list[ProviderCapability]:
+        maximum = 1.0 if model == "strict" else 2.0
+        return [
+            ProviderCapability(
+                provider=self.name,
+                model=model,
+                task_types=frozenset(self.tasks),
+                temperature=TemperatureRange(minimum=0, maximum=maximum),
+            )
+        ]
 
 
 def test_registry_lifecycle(stub_provider: StubProvider) -> None:
@@ -118,6 +134,61 @@ async def test_project_model_profiles_select_installed_models() -> None:
     }
     assert selected.model == "balanced-model"
     assert registry.get("ollama").requests[1].options == {"temperature": 0.1}
+
+
+def test_model_temperature_is_validated_applied_and_overridable() -> None:
+    provider = TemperatureProvider("sampling", models={"strict", "flexible"})
+    config = CortexMuxConfig.model_validate(
+        {
+            "routing": {
+                "active_profile": "analysis",
+                "profiles": {
+                    "analysis": {
+                        "text_generation": {
+                            "provider": "sampling",
+                            "model": "strict",
+                            "options": {"temperature": 0.1},
+                        }
+                    }
+                },
+            }
+        }
+    )
+    mux = CortexMux(config, register_builtin_providers=False)
+    mux.register_provider(provider)
+
+    with mux:
+        setting = mux.set_temperature(0.7, provider="sampling", model="strict")
+        assert setting.value == 0.7
+        assert setting.minimum == 0
+        assert setting.maximum == 1
+        assert mux.temperature_setting(provider="sampling", model="strict") == setting
+
+        mux.generate("default")
+        mux.generate("override", provider="sampling", model="strict", temperature=0.2)
+        mux.clear_temperature(provider="sampling", model="strict")
+        mux.generate("cleared", provider="sampling", model="strict")
+
+    assert provider.requests[0].options == {"temperature": 0.7}
+    assert provider.requests[1].options == {"temperature": 0.2}
+    assert provider.requests[2].options == {}
+
+
+def test_model_temperature_rejects_unsupported_and_out_of_range_values() -> None:
+    mux = CortexMux(CortexMuxConfig(), register_builtin_providers=False)
+    mux.register_provider(TemperatureProvider("sampling", models={"strict", "flexible"}))
+    mux.register_provider(StubProvider("unsupported", models={"model"}))
+
+    with mux:
+        with pytest.raises(InvalidRequestError, match="outside") as out_of_range:
+            mux.set_temperature(1.2, provider="sampling", model="strict")
+        assert out_of_range.value.context["maximum"] == 1.0
+
+        setting = mux.set_temperature(1.2, provider="sampling", model="flexible")
+        assert setting.maximum == 2.0
+
+        with pytest.raises(InvalidRequestError, match="does not declare"):
+            mux.set_temperature(0.2, provider="unsupported", model="model")
 
 
 @pytest.mark.asyncio

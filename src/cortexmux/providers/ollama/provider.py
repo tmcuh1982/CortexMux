@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cortexmux.core.capabilities import ProviderCapability
+from cortexmux.core.capabilities import ProviderCapability, TemperatureRange
 from cortexmux.core.exceptions import (
     CortexMuxError,
     InvalidRequestError,
@@ -117,6 +117,7 @@ class OllamaProvider(BaseProvider):
                 structured_output=True,
                 image_input=True,
                 batch=True,
+                temperature=TemperatureRange(minimum=0, maximum=2, default=0.8),
             )
         ]
 

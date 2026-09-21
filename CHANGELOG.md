@@ -4,6 +4,22 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc4] - 2026-09-21
+
+### Added
+
+- Typed per-model temperature capabilities and instance-scoped
+  `set_temperature()` defaults with provider/model range validation, explicit
+  request precedence, introspection, and clearing.
+- Opt-in asynchronous OpenAI Responses WebSocket sessions, initially for GPT-6
+  Astra, with application-owned function calls, mid-turn steering, and
+  cache-preserving reasoning updates.
+- Private offline Codex lab: typed synthetic/imported cases, local validation
+  reports, exact-output expectations and deterministic `codex-replay` provider.
+- `codex-lab init/add/list/validate` commands with no live network or process use.
+- Storage outside Git, restrictive file modes, bounded files, sanitized errors,
+  and Git/package exclusions for private case data and validation reports.
+
 ## [0.6.0rc3] - 2026-09-10
 
 ### Fixed

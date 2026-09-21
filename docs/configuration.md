@@ -73,6 +73,31 @@ with CortexMux.from_env(config_path="config.toml") as mux:
 Provider headers are secret values. Do not commit credentials. Remote hosts
 must be explicitly allowed and are never used as a silent fallback.
 
+## Per-model temperature defaults
+
+Providers may declare inclusive temperature bounds for each model through
+their typed capabilities. `set_temperature()` validates those bounds before
+installing an instance-scoped default for the exact provider/model pair:
+
+```python
+with CortexMux.from_env(config_path="config.toml") as mux:
+    setting = mux.set_temperature(
+        0.3,
+        provider="ollama",
+        model="qwen3.6:27b",
+    )
+    assert setting.minimum <= setting.value <= setting.maximum
+    response = mux.chat("Analyse ce résultat", model_profile="quality")
+```
+
+The precedence is explicit request option, `set_temperature()` default,
+profile option, then the provider/model default. Use `clear_temperature()` to
+remove the instance default. Unsupported provider/model pairs and values
+outside declared bounds raise `InvalidRequestError`; CortexMux never clamps a
+temperature silently. The Ollama adapter deliberately enforces CortexMux's
+normalized `0..2` range while custom providers can publish different ranges
+for each model.
+
 Mathematical verification is configured under `[data]` with
 `max_calculation_claims`, `math_absolute_tolerance`, and
 `math_relative_tolerance`. Tolerances must be non-negative decimals. Request

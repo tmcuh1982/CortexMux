@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from cortexmux import CortexMux
+from cortexmux.cli.codex_lab import app as codex_lab_app
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import (
     ConfigurationError,
@@ -29,6 +30,7 @@ image_app = typer.Typer(help="Generate images.")
 data_app = typer.Typer(help="Analyze local data.")
 config_app = typer.Typer(help="Inspect configuration.")
 workflows_app = typer.Typer(help="Inspect and validate ComfyUI workflows.")
+app.add_typer(codex_lab_app, name="codex-lab")
 app.add_typer(models_app, name="models")
 app.add_typer(image_app, name="image")
 app.add_typer(data_app, name="data")

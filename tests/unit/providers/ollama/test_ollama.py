@@ -499,6 +499,9 @@ async def test_capabilities_options_and_invalid_vision(tmp_path: Path) -> None:
     provider = provider_for(httpx.MockTransport(handler))
     capabilities = await provider.get_capabilities("m")
     assert capabilities[0].structured_output
+    assert capabilities[0].temperature is not None
+    assert capabilities[0].temperature.minimum == 0
+    assert capabilities[0].temperature.maximum == 2
     assert provider.supports(TextGenerationRequest(prompt="x").task)
     response = await provider.execute(
         TextGenerationRequest(

@@ -1,4 +1,5 @@
 __pycache__/
+.DS_Store
 *.py[cod]
 *.egg-info/
 .coverage
@@ -12,3 +13,7 @@ dist/
 htmlcov/
 outputs/
 
+# Private Codex test data: never commit local prompts/responses/reports.
+.cortexmux-private/
+*.codex-case.json
+*.codex-validation.json

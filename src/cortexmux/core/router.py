@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from time import perf_counter
 
+from cortexmux.core.capabilities import TemperatureSetting
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import ModelNotFoundError, ModelSelectionError, UnsupportedTaskError
 from cortexmux.core.registry import ProviderRegistry
@@ -22,6 +23,19 @@ class Router:
     def __init__(self, registry: ProviderRegistry, config: CortexMuxConfig) -> None:
         self.registry = registry
         self.config = config
+        self._model_temperatures: dict[tuple[str, str], TemperatureSetting] = {}
+
+    def set_temperature(self, setting: TemperatureSetting) -> None:
+        """Set a validated instance-level default for one provider/model pair."""
+        self._model_temperatures[(setting.provider, setting.model)] = setting
+
+    def clear_temperature(self, *, provider: str, model: str) -> None:
+        """Remove an instance-level temperature default when one exists."""
+        self._model_temperatures.pop((provider, model), None)
+
+    def temperature_setting(self, *, provider: str, model: str) -> TemperatureSetting | None:
+        """Return the configured instance-level temperature default, if any."""
+        return self._model_temperatures.get((provider, model))
 
     def select(self, request: CortexRequest) -> tuple[BaseProvider, str | None, str]:
         """Select exactly one provider/model and return an auditable reason."""
@@ -135,13 +149,18 @@ class Router:
         model: str | None,
         reason: str,
     ) -> CortexRequest:
-        """Apply configured profile options without overriding explicit request options."""
-        options = request.options
+        """Merge profile and model defaults without overriding explicit request options."""
+        options: dict[str, str | int | float | bool | list[str]] = {}
         if reason == "configured_model_profile":
             profile = self.config.routing.profile_for(request.model_profile)
             route = profile.route_for(request.task) if profile is not None else None
             if route is not None:
-                options = {**route.options, **request.options}
+                options.update(route.options)
+        if model is not None and "temperature" not in request.options:
+            setting = self.temperature_setting(provider=provider.name, model=model)
+            if setting is not None:
+                options["temperature"] = setting.value
+        options.update(request.options)
         return request.model_copy(
             update={"provider": provider.name, "model": model, "options": options}
         )
