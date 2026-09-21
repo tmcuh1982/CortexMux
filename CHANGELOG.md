@@ -4,6 +4,19 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc5] - 2026-09-21
+
+### Added
+
+- Opt-in Grok provider using the xAI Responses API for text, chat and locally
+  validated JSON, with language model/alias discovery, typed sampling options,
+  bounded retries, explicit host approval, disabled response storage, and
+  offline transport/facade tests. No additional SDK is required.
+- Opt-in Google AI Studio Gemini provider for text generation, chat, and locally
+  validated JSON output, using the existing HTTP dependency. Includes paginated
+  model discovery, typed sampling options, token usage, bounded retries,
+  explicit remote-host approval, and offline transport/facade regression tests.
+
 ## [0.6.0rc4] - 2026-09-21
 
 ### Added

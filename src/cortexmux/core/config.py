@@ -66,6 +66,62 @@ class OpenAIConfig(BaseModel):
     defaults: OllamaDefaults = Field(default_factory=OllamaDefaults)
 
 
+class GeminiDefaults(BaseModel):
+    """Explicit model IDs for the Gemini text tasks implemented by CortexMux."""
+
+    chat: str | None = None
+    text_generation: str | None = None
+    structured_output: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def empty_is_unset(cls, value: object) -> object:
+        """Treat empty strings as an absent model default."""
+        return None if value == "" else value
+
+
+class GeminiConfig(BaseModel):
+    """Explicit opt-in Google AI Studio Gemini API configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    timeout_seconds: float = Field(default=120, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_base_delay_seconds: float = Field(default=0.25, ge=0, le=60)
+    retry_max_delay_seconds: float = Field(default=2, ge=0, le=60)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="GEMINI_API_KEY", min_length=1)
+    defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
+
+
+class GrokDefaults(BaseModel):
+    """Explicit model IDs for the Grok text tasks implemented by CortexMux."""
+
+    chat: str | None = None
+    text_generation: str | None = None
+    structured_output: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def empty_is_unset(cls, value: object) -> object:
+        """Treat empty strings as an absent model default."""
+        return None if value == "" else value
+
+
+class GrokConfig(BaseModel):
+    """Explicit opt-in xAI API configuration for Grok."""
+
+    enabled: bool = False
+    base_url: str = "https://api.x.ai/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_base_delay_seconds: float = Field(default=0.25, ge=0, le=60)
+    retry_max_delay_seconds: float = Field(default=2, ge=0, le=60)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="XAI_API_KEY", min_length=1)
+    defaults: GrokDefaults = Field(default_factory=GrokDefaults)
+
+
 class ComfyUIConfig(BaseModel):
     """ComfyUI endpoint and workflow configuration."""
 
@@ -106,6 +162,8 @@ class ProvidersConfig(BaseModel):
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    gemini: GeminiConfig = Field(default_factory=GeminiConfig)
+    grok: GrokConfig = Field(default_factory=GrokConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
 
@@ -237,7 +295,7 @@ class CortexMuxConfig(BaseModel):
 
     def model_for(self, task: TaskType, provider: str) -> str | None:
         """Return a provider's configured default model for a task."""
-        if provider in {"ollama", "openai"}:
+        if provider in {"ollama", "openai", "gemini", "grok"}:
             defaults = getattr(self.providers, provider).defaults
             value = getattr(defaults, task.value, None)
             return value if isinstance(value, str) else None
@@ -296,6 +354,10 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
         "CORTEXMUX_OLLAMA_BASE_URL": ("providers", "ollama", "base_url"),
         "CORTEXMUX_OPENAI_BASE_URL": ("providers", "openai", "base_url"),
         "CORTEXMUX_OPENAI_ENABLED": ("providers", "openai", "enabled"),
+        "CORTEXMUX_GEMINI_BASE_URL": ("providers", "gemini", "base_url"),
+        "CORTEXMUX_GEMINI_ENABLED": ("providers", "gemini", "enabled"),
+        "CORTEXMUX_GROK_BASE_URL": ("providers", "grok", "base_url"),
+        "CORTEXMUX_GROK_ENABLED": ("providers", "grok", "enabled"),
         "CORTEXMUX_COMFYUI_BASE_URL": ("providers", "comfyui", "base_url"),
         "CORTEXMUX_OUTPUT_DIR": ("core", "output_dir"),
         "CORTEXMUX_ALLOW_REMOTE_HOSTS": ("core", "allow_remote_hosts"),
@@ -322,6 +384,8 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
             "CORTEXMUX_WEB_ENABLED",
             "CORTEXMUX_WEB_ALLOW_PRIVATE_HOSTS",
             "CORTEXMUX_OPENAI_ENABLED",
+            "CORTEXMUX_GEMINI_ENABLED",
+            "CORTEXMUX_GROK_ENABLED",
         }:
             value = value.lower() in {"1", "true", "yes", "on"}
         cursor = result

@@ -24,6 +24,22 @@ no partial fragment is represented as validated application data.
 Custom providers subclass `BaseProvider` and can be registered through
 `mux.register_provider(provider)`.
 
+## Gemini API
+
+The `gemini` provider uses Google AI Studio's native `generateContent` API for
+text, chat and structured JSON. It is opt-in and requires explicit remote-host
+approval. System instructions are separate from user content, and outputs are
+normalized into existing CortexMux response models. See
+[Gemini configuration, options and limitations](gemini.md).
+
+## Grok API
+
+The `grok` provider uses xAI's Responses API for text, chat and JSON, with
+`store=false` and no tools. Language models and aliases come from the
+authenticated xAI catalog. Local JSON validation, normalized token usage and
+the existing routing metadata also apply. See
+[Grok configuration, options and limitations](grok.md).
+
 ## OpenAI Responses API
 
 OpenAI is opt-in and uses `POST /responses` with `store: false`. For text and

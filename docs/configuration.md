@@ -6,6 +6,8 @@ configuration directory for `config.toml`.
 
 Supported environment variables include `CORTEXMUX_OLLAMA_BASE_URL`,
 `CORTEXMUX_OPENAI_ENABLED`, `CORTEXMUX_OPENAI_BASE_URL`,
+`CORTEXMUX_GEMINI_ENABLED`, `CORTEXMUX_GEMINI_BASE_URL`,
+`CORTEXMUX_GROK_ENABLED`, `CORTEXMUX_GROK_BASE_URL`,
 `CORTEXMUX_COMFYUI_BASE_URL`, `CORTEXMUX_OUTPUT_DIR`,
 `CORTEXMUX_ALLOW_REMOTE_HOSTS`, `CORTEXMUX_LOG_LEVEL`, task model defaults, and
 `CORTEXMUX_DEFAULT_COMFYUI_WORKFLOW`. Optional page retrieval uses
@@ -20,6 +22,25 @@ bounded full-jitter delays configured by `retry_base_delay_seconds` (default
 `0.25`) and `retry_max_delay_seconds` (default `2`). See
 [provider behavior](providers.md#openai-responses-api) and
 [model qualification](model-qualification.md).
+
+Gemini is also disabled by default. Enable `providers.gemini.enabled`, approve
+`generativelanguage.googleapis.com` under `core.approved_hosts`, and set
+`GEMINI_API_KEY` in the process environment. A key alone never enables Gemini.
+`providers.gemini.api_key_env` can name another environment variable; an explicit
+Python `api_key` (stored as `SecretStr`) takes precedence. The retry and timeout
+settings have the same defaults as OpenAI above. Gemini requires HTTPS except
+on loopback, rejects credentials/query strings/fragments in its base URL, and
+never follows redirects. Use bare model IDs returned by `list_models("gemini")`
+in `providers.gemini.defaults` or routing profiles. See the complete
+[Gemini setup example](gemini.md).
+
+Grok follows the same explicit activation policy: enable `providers.grok.enabled`,
+approve `api.x.ai` under `core.approved_hosts`, and provide `XAI_API_KEY`.
+`providers.grok.api_key_env` selects a different environment variable; an explicit
+Python `api_key` takes precedence. Its base URL defaults to `https://api.x.ai/v1`,
+and its timeout/retry settings match Gemini's. Configuring a key alone never
+enables the provider or changes local task defaults. Use IDs or aliases returned
+by `list_models("grok")`. See the [Grok setup guide](grok.md).
 
 ## Project model profiles
 

@@ -18,6 +18,8 @@ surface is tested, but production deployments should pin the patch version.
   JSON/YAML recommendation manifests.
 - Native Ollama text, chat, JSON, vision, embedding, and incremental streaming.
 - Explicit opt-in OpenAI Responses API text, chat, and structured output.
+- Explicit opt-in Gemini API text, chat, and validated JSON through Google AI Studio.
+- Explicit opt-in Grok text, chat, and validated JSON through the xAI API.
 - Opt-in asynchronous OpenAI Responses sessions with function tools and live steering.
 - Native ComfyUI workflow catalogs, typed progress, binding, queueing, and safe downloads.
 - Safe Pandas analysis plus optional Polars and DuckDB loading.
@@ -78,6 +80,16 @@ default and has no trading or configuration-write capability; see
 
 Structured output accepts `response_model=YourPydanticModel`. Vision accepts a
 path, bytes, or validated base64. Embeddings accept one string or a list.
+
+Gemini uses `provider="gemini"` with the same `generate()`, `chat()` and
+`structured()` methods, including their asynchronous variants. It requires
+explicit activation, an approved Google endpoint, and `GEMINI_API_KEY`; see
+[Gemini setup](docs/gemini.md). No additional SDK is needed.
+
+Grok uses `provider="grok"` with the same methods. Enable it explicitly with
+an approved `api.x.ai` endpoint and `XAI_API_KEY`; see
+[Grok setup](docs/grok.md). Responses are requested with `store=false` and
+without server-side tools.
 
 OpenAI Responses requests keep system instructions separate from user input.
 For GPT-6 Astra, CortexMux defaults to `reasoning_effort="low"`; Standard

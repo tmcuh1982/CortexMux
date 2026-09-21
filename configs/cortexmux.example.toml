@@ -34,6 +34,38 @@ structured_output = ""
 vision = ""
 embedding = ""
 
+# Approve generativelanguage.googleapis.com under [core] before enabling Gemini.
+# Keep the key in GEMINI_API_KEY, never in this file.
+[providers.gemini]
+enabled = false
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+timeout_seconds = 120
+max_retries = 2
+retry_base_delay_seconds = 0.25
+retry_max_delay_seconds = 2
+api_key_env = "GEMINI_API_KEY"
+
+[providers.gemini.defaults]
+chat = ""
+text_generation = ""
+structured_output = ""
+
+# Approve api.x.ai under [core] before enabling Grok.
+# Keep the key in XAI_API_KEY, never in this file.
+[providers.grok]
+enabled = false
+base_url = "https://api.x.ai/v1"
+timeout_seconds = 120
+max_retries = 2
+retry_base_delay_seconds = 0.25
+retry_max_delay_seconds = 2
+api_key_env = "XAI_API_KEY"
+
+[providers.grok.defaults]
+chat = ""
+text_generation = ""
+structured_output = ""
+
 [providers.comfyui]
 enabled = true
 base_url = "http://127.0.0.1:8188"

@@ -41,6 +41,10 @@ from cortexmux.providers.comfyui import (
     WorkflowDefinition,
 )
 from cortexmux.providers.data import DataAnalysisProvider, MathVerifier
+from cortexmux.providers.gemini import GeminiClient, GeminiProvider
+from cortexmux.providers.gemini.client import validate_gemini_base_url
+from cortexmux.providers.grok import GrokClient, GrokProvider
+from cortexmux.providers.grok.client import validate_grok_base_url
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
 from cortexmux.providers.openai import (
     OpenAIAsyncSession,
@@ -211,6 +215,64 @@ class CortexMux:
                         max_retries=openai_settings.max_retries,
                         retry_base_delay_seconds=openai_settings.retry_base_delay_seconds,
                         retry_max_delay_seconds=openai_settings.retry_max_delay_seconds,
+                    )
+                )
+            )
+        if self.config.providers.gemini.enabled:
+            gemini_settings = self.config.providers.gemini
+            url = validate_provider_url(
+                validate_gemini_base_url(gemini_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                gemini_settings.api_key.get_secret_value()
+                if gemini_settings.api_key is not None
+                else os.environ.get(gemini_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "Gemini is enabled but its API key is unavailable.",
+                    environment_variable=gemini_settings.api_key_env,
+                )
+            self.registry.register(
+                GeminiProvider(
+                    GeminiClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=gemini_settings.timeout_seconds,
+                        max_retries=gemini_settings.max_retries,
+                        retry_base_delay_seconds=gemini_settings.retry_base_delay_seconds,
+                        retry_max_delay_seconds=gemini_settings.retry_max_delay_seconds,
+                    )
+                )
+            )
+        if self.config.providers.grok.enabled:
+            grok_settings = self.config.providers.grok
+            url = validate_provider_url(
+                validate_grok_base_url(grok_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                grok_settings.api_key.get_secret_value()
+                if grok_settings.api_key is not None
+                else os.environ.get(grok_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "Grok is enabled but its API key is unavailable.",
+                    environment_variable=grok_settings.api_key_env,
+                )
+            self.registry.register(
+                GrokProvider(
+                    GrokClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=grok_settings.timeout_seconds,
+                        max_retries=grok_settings.max_retries,
+                        retry_base_delay_seconds=grok_settings.retry_base_delay_seconds,
+                        retry_max_delay_seconds=grok_settings.retry_max_delay_seconds,
                     )
                 )
             )
