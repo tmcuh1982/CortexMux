@@ -8,6 +8,7 @@ Supported environment variables include `CORTEXMUX_OLLAMA_BASE_URL`,
 `CORTEXMUX_OPENAI_ENABLED`, `CORTEXMUX_OPENAI_BASE_URL`,
 `CORTEXMUX_GEMINI_ENABLED`, `CORTEXMUX_GEMINI_BASE_URL`,
 `CORTEXMUX_GROK_ENABLED`, `CORTEXMUX_GROK_BASE_URL`,
+`CORTEXMUX_TYPESAFE_ENABLED`, `CORTEXMUX_TYPESAFE_BASE_URL`,
 `CORTEXMUX_COMFYUI_BASE_URL`, `CORTEXMUX_OUTPUT_DIR`,
 `CORTEXMUX_ALLOW_REMOTE_HOSTS`, `CORTEXMUX_LOG_LEVEL`, task model defaults, and
 `CORTEXMUX_DEFAULT_COMFYUI_WORKFLOW`. Optional page retrieval uses
@@ -41,6 +42,11 @@ Python `api_key` takes precedence. Its base URL defaults to `https://api.x.ai/v1
 and its timeout/retry settings match Gemini's. Configuring a key alone never
 enables the provider or changes local task defaults. Use IDs or aliases returned
 by `list_models("grok")`. See the [Grok setup guide](grok.md).
+
+TypeSafe decisions are also opt-in. Enable `providers.typesafe.enabled`, approve
+`api.typesafe.ai` under `core.approved_hosts`, and supply `TYPESAFE_API_KEY`.
+The provider only evaluates application-supplied typed questions; see the
+[TypeSafe setup guide](typesafe.md).
 
 ## Project model profiles
 

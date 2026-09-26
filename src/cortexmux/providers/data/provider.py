@@ -120,8 +120,23 @@ class DataAnalysisProvider(BaseProvider):
             max_sample_rows=self.config.max_sample_rows,
             sensitive_patterns=self.config.sensitive_column_patterns,
         )
+        model_enabled = bool(request.interpretation_provider and request.interpretation_model)
+        safe_frame = (
+            frame.drop(columns=profile.redacted_columns)
+            if profile.redacted_columns and model_enabled
+            else frame
+        )
+        model_profile = (
+            engine.profile(
+                safe_frame,
+                max_sample_rows=self.config.max_sample_rows,
+                sensitive_patterns=[],
+            )
+            if profile.redacted_columns and model_enabled
+            else profile
+        )
         warnings: list[str] = []
-        plan = await self._resolve_plan(request, profile, warnings)
+        plan = await self._resolve_plan(request, model_profile, warnings)
         try:
             plan.bounded(self.config.max_plan_steps)
         except ValueError as exc:
@@ -153,13 +168,29 @@ class DataAnalysisProvider(BaseProvider):
             if request.create_charts
             else []
         )
-        model_results = _redact_results(results, set(profile.redacted_columns))
-        interpretation, calculation_claims, character_count = await self._interpret(
-            request, profile, model_results, warnings
-        )
+        model_results = results
+        can_interpret = True
+        if profile.redacted_columns and model_enabled:
+            try:
+                model_results = engine.execute(
+                    safe_frame, plan, max_result_rows=self.config.max_result_rows
+                )
+            except DataAnalysisError:
+                can_interpret = False
+                model_results = []
+                warnings.append(
+                    "AI interpretation was skipped because the analysis plan uses "
+                    "sensitive columns."
+                )
+        if can_interpret:
+            interpretation, calculation_claims, character_count = await self._interpret(
+                request, model_profile, model_results, warnings
+            )
+        else:
+            interpretation, calculation_claims, character_count = None, [], 0
         verifications, math_verification_passed = self._verify_calculations(
             request,
-            profile=profile,
+            profile=model_profile,
             results=model_results,
             claims=calculation_claims,
             warnings=warnings,
@@ -380,15 +411,3 @@ class DataAnalysisProvider(BaseProvider):
 
 def _installed(package: str) -> bool:
     return importlib.util.find_spec(package) is not None
-
-
-def _redact_results(value: Any, redacted_columns: set[str]) -> Any:
-    if isinstance(value, list):
-        return [_redact_results(item, redacted_columns) for item in value]
-    if isinstance(value, dict):
-        return {
-            key: _redact_results(item, redacted_columns)
-            for key, item in value.items()
-            if str(key) not in redacted_columns
-        }
-    return value

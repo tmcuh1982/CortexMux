@@ -4,6 +4,23 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc6] - 2026-09-26
+
+### Fixed
+
+- Keep sensitive numeric aggregates out of model prompts, bound time-series
+  resampling before allocation, and limit HTML table width and total cells.
+
+### Added
+
+- Opt-in TypeSafe Jev decision provider with typed Noul, Choice and Score
+  requests and probability responses, explicit remote-host approval and
+  network-free contract tests. Decision thresholds and follow-up actions remain
+  with the application.
+- Allow versioned Jev model IDs to reach TypeSafe even when model discovery
+  lists only aliases, so applications can pin a calibrated version.
+- Include the build backend in the development extra for offline, non-isolated builds.
+
 ## [0.6.0rc5] - 2026-09-21
 
 ### Added

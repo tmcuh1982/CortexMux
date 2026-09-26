@@ -24,6 +24,8 @@ max_text_characters = 100000
 max_redirects = 3
 max_tables = 20
 max_table_rows = 1000
+max_table_columns = 256
+max_table_cells = 100000
 ```
 
 An empty `allowed_hosts` accepts any host that resolves exclusively to public
@@ -103,8 +105,9 @@ metadata under `raw_metadata["web_source"]`.
 - Ports default to 80 and 443.
 - Private, loopback, link-local, multicast, reserved, and otherwise non-public
   resolved addresses are rejected unless `allow_private_hosts=true`.
-- Response bytes, extracted characters, redirects, tables, and table rows are
-  bounded.
+- Response bytes, extracted characters, redirects, tables, rows, columns, and
+  total normalized table cells are bounded. Pages that exceed a table shape
+  limit are rejected.
 - Only HTML, XHTML, and plain text are accepted.
 
 DNS resolution and the HTTP connection are separate operating-system

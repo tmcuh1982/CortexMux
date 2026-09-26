@@ -449,3 +449,77 @@ async def test_sensitive_result_columns_are_not_sent_to_ai(csv_file: Path, tmp_p
     assert "secret" not in prompts[0]
     assert "hidden" not in prompts[0]
     assert "private" not in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_sensitive_numeric_aggregates_never_reach_model(tmp_path: Path) -> None:
+    prompts: list[str] = []
+
+    async def executor(request: object) -> object:
+        assert isinstance(request, StructuredOutputRequest)
+        prompts.append(request.prompt)
+        return StructuredResponse(
+            provider="ollama",
+            model=request.model,
+            request_id=request.request_id,
+            content="structured",
+            parsed={"content": "Safe summary.", "calculations": []},
+        )
+
+    provider = DataAnalysisProvider(
+        DataConfig(),
+        output_dir=tmp_path,
+        request_executor=executor,  # type: ignore[arg-type]
+    )
+    source = [
+        {"value": 1, "password_score": 777},
+        {"value": 2, "password_score": 999},
+    ]
+    response = await provider.execute(
+        DataAnalysisRequest(
+            source=source,
+            provider="data",
+            plan={"steps": [{"operation": "describe"}, {"operation": "shape"}]},
+            interpretation_provider="ollama",
+            interpretation_model="model",
+        )
+    )
+    assert response.interpretation == "Safe summary."
+    assert "password_score" in response.results[0]["data"][0]
+    assert len(prompts) == 1
+    assert "password_score" not in prompts[0]
+    assert "777" not in prompts[0]
+    assert "999" not in prompts[0]
+
+    prompts.clear()
+    sensitive_response = await provider.execute(
+        DataAnalysisRequest(
+            source=source,
+            provider="data",
+            plan={"steps": [{"operation": "histogram", "columns": ["password_score"]}]},
+            interpretation_provider="ollama",
+            interpretation_model="model",
+        )
+    )
+    assert sensitive_response.results[0]["data"]
+    assert sensitive_response.interpretation is None
+    assert not prompts
+    assert any("sensitive columns" in warning for warning in sensitive_response.warnings)
+
+
+@pytest.mark.parametrize("engine", [PandasEngine(), PolarsEngine(), DuckDBEngine()])
+@pytest.mark.parametrize("columns", [["date"], ["date", "value"]])
+def test_time_series_rejects_excessive_bins_before_resampling(
+    engine: PandasEngine, columns: list[str]
+) -> None:
+    frame = pd.DataFrame({"date": ["2026-01-01", "2026-01-02"], "value": [1, 2]})
+    plan = AnalysisPlan.model_validate(
+        {"steps": [{"operation": "time_series", "columns": columns, "frequency": "1ms"}]}
+    )
+    with pytest.raises(DataAnalysisError, match="bin limit"):
+        engine.execute(frame, plan, max_result_rows=2)
+
+    monthly = plan.model_copy(
+        update={"steps": [plan.steps[0].model_copy(update={"frequency": "ME"})]}
+    )
+    assert len(engine.execute(frame, monthly, max_result_rows=2)[0]["data"]) == 1

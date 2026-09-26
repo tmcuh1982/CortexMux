@@ -40,6 +40,13 @@ authenticated xAI catalog. Local JSON validation, normalized token usage and
 the existing routing metadata also apply. See
 [Grok configuration, options and limitations](grok.md).
 
+## TypeSafe System One API
+
+The `typesafe` provider evaluates application-supplied state against typed
+Noul, Choice or Score questions. It returns the original probabilities and
+usage without applying a threshold or making application decisions. See
+[TypeSafe configuration and examples](typesafe.md).
+
 ## OpenAI Responses API
 
 OpenAI is opt-in and uses `POST /responses` with `store: false`. For text and

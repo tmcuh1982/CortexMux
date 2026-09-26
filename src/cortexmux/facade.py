@@ -53,13 +53,16 @@ from cortexmux.providers.openai import (
     OpenAIProvider,
     OpenAIReasoningEffort,
 )
+from cortexmux.providers.typesafe import TypeSafeClient, TypeSafeProvider
 from cortexmux.schemas.calculations import CalculationClaim, CalculationVerification
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
+from cortexmux.schemas.decisions import DecisionQuestion
 from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import (
     ChatRequest,
     CortexRequest,
     DataAnalysisRequest,
+    DecisionRequest,
     EmbeddingRequest,
     ImageGenerationRequest,
     StructuredOutputRequest,
@@ -70,6 +73,7 @@ from cortexmux.schemas.responses import (
     ChatResponse,
     CortexResponse,
     DataAnalysisResponse,
+    DecisionResponse,
     EmbeddingResponse,
     ImageGenerationResponse,
     StreamEvent,
@@ -276,6 +280,34 @@ class CortexMux:
                     )
                 )
             )
+        if self.config.providers.typesafe.enabled:
+            settings = self.config.providers.typesafe
+            from cortexmux.providers.typesafe.client import validate_typesafe_base_url
+
+            url = validate_provider_url(
+                validate_typesafe_base_url(settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                settings.api_key.get_secret_value()
+                if settings.api_key is not None
+                else os.environ.get(settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "TypeSafe is enabled but its API key is unavailable.",
+                    environment_variable=settings.api_key_env,
+                )
+            self.registry.register(
+                TypeSafeProvider(
+                    TypeSafeClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=settings.timeout_seconds,
+                    )
+                )
+            )
         if self.config.providers.codex.enabled:
             self.registry.register(CodexProvider(CodexClient(self.config.providers.codex)))
         if self.config.providers.comfyui.enabled:
@@ -454,6 +486,43 @@ class CortexMux:
     def run(self, request: CortexRequest | TaskType | str, **fields: Any) -> CortexResponse:
         """Validate and execute a generic synchronous request."""
         return self._sync(self.arun(request, **fields))
+
+    async def adecide(
+        self,
+        state: str | dict[str, Any] | list[Any],
+        questions: dict[str, DecisionQuestion],
+        *,
+        provider: str | None = "typesafe",
+        model: str | None = None,
+        timeout: float | None = None,
+    ) -> DecisionResponse:
+        """Ask typed decision questions without applying application policy."""
+        return cast(
+            DecisionResponse,
+            await self.arun(
+                DecisionRequest(
+                    state=state,
+                    questions=questions,
+                    provider=provider,
+                    model=model,
+                    timeout=timeout,
+                )
+            ),
+        )
+
+    def decide(
+        self,
+        state: str | dict[str, Any] | list[Any],
+        questions: dict[str, DecisionQuestion],
+        *,
+        provider: str | None = "typesafe",
+        model: str | None = None,
+        timeout: float | None = None,
+    ) -> DecisionResponse:
+        """Ask typed decision questions through the shared synchronous runner."""
+        return self._sync(
+            self.adecide(state, questions, provider=provider, model=model, timeout=timeout)
+        )
 
     async def astream(self, request: CortexRequest) -> AsyncGenerator[StreamEvent, None]:
         """Stream a typed request; close the iterator on early consumer exit."""
@@ -1194,6 +1263,7 @@ def _request_for(task: TaskType | str, fields: dict[str, Any]) -> CortexRequest:
         TaskType.EMBEDDING: EmbeddingRequest,
         TaskType.IMAGE_GENERATION: ImageGenerationRequest,
         TaskType.DATA_ANALYSIS: DataAnalysisRequest,
+        TaskType.DECISION: DecisionRequest,
     }
     try:
         return classes[task_type].model_validate({"task": task_type, **fields})

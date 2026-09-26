@@ -187,7 +187,7 @@ class Router:
             return
         installed = await provider.list_models()
         installed_names = {item.name for item in installed}
-        if model not in installed_names:
+        if model not in installed_names and not provider.accepts_unlisted_model(model):
             raise ModelNotFoundError(
                 "The selected model is not installed for this provider.",
                 provider=provider.name,

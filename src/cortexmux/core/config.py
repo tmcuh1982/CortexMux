@@ -122,6 +122,17 @@ class GrokConfig(BaseModel):
     defaults: GrokDefaults = Field(default_factory=GrokDefaults)
 
 
+class TypeSafeConfig(BaseModel):
+    """Explicit opt-in configuration for TypeSafe decision models."""
+
+    enabled: bool = False
+    base_url: str = "https://api.typesafe.ai"
+    timeout_seconds: float = Field(default=15, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="TYPESAFE_API_KEY", min_length=1)
+    default_model: str = Field(default="jev-latest", min_length=1)
+
+
 class ComfyUIConfig(BaseModel):
     """ComfyUI endpoint and workflow configuration."""
 
@@ -164,6 +175,7 @@ class ProvidersConfig(BaseModel):
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     grok: GrokConfig = Field(default_factory=GrokConfig)
+    typesafe: TypeSafeConfig = Field(default_factory=TypeSafeConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
 
@@ -178,6 +190,7 @@ class RoutingDefaults(BaseModel):
     embedding_provider: str | None = "ollama"
     image_generation_provider: str | None = "comfyui"
     data_analysis_provider: str | None = "data"
+    decision_provider: str | None = None
 
     def provider_for(self, task: TaskType) -> str | None:
         """Return the configured provider for a task."""
@@ -204,6 +217,7 @@ class ModelProfile(BaseModel):
     structured_output: TaskModelRoute | None = None
     vision: TaskModelRoute | None = None
     embedding: TaskModelRoute | None = None
+    decision: TaskModelRoute | None = None
 
     def route_for(self, task: TaskType) -> TaskModelRoute | None:
         """Return the configured route for a model-backed task."""
@@ -271,6 +285,8 @@ class WebConfig(BaseModel):
     max_redirects: int = Field(default=3, ge=0, le=10)
     max_tables: int = Field(default=20, ge=0, le=100)
     max_table_rows: int = Field(default=1_000, ge=0, le=10_000)
+    max_table_columns: int = Field(default=256, gt=0, le=10_000)
+    max_table_cells: int = Field(default=100_000, gt=0, le=1_000_000)
     user_agent: str = Field(default="CortexMux-web-extraction/1", min_length=1)
 
     @field_validator("allowed_hosts", mode="before")
@@ -295,6 +311,8 @@ class CortexMuxConfig(BaseModel):
 
     def model_for(self, task: TaskType, provider: str) -> str | None:
         """Return a provider's configured default model for a task."""
+        if provider == "typesafe" and task == TaskType.DECISION:
+            return self.providers.typesafe.default_model
         if provider in {"ollama", "openai", "gemini", "grok"}:
             defaults = getattr(self.providers, provider).defaults
             value = getattr(defaults, task.value, None)
@@ -358,6 +376,8 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
         "CORTEXMUX_GEMINI_ENABLED": ("providers", "gemini", "enabled"),
         "CORTEXMUX_GROK_BASE_URL": ("providers", "grok", "base_url"),
         "CORTEXMUX_GROK_ENABLED": ("providers", "grok", "enabled"),
+        "CORTEXMUX_TYPESAFE_BASE_URL": ("providers", "typesafe", "base_url"),
+        "CORTEXMUX_TYPESAFE_ENABLED": ("providers", "typesafe", "enabled"),
         "CORTEXMUX_COMFYUI_BASE_URL": ("providers", "comfyui", "base_url"),
         "CORTEXMUX_OUTPUT_DIR": ("core", "output_dir"),
         "CORTEXMUX_ALLOW_REMOTE_HOSTS": ("core", "allow_remote_hosts"),
@@ -386,6 +406,7 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
             "CORTEXMUX_OPENAI_ENABLED",
             "CORTEXMUX_GEMINI_ENABLED",
             "CORTEXMUX_GROK_ENABLED",
+            "CORTEXMUX_TYPESAFE_ENABLED",
         }:
             value = value.lower() in {"1", "true", "yes", "on"}
         cursor = result

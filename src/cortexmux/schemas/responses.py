@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.calculations import CalculationVerification
 from cortexmux.schemas.common import ImageArtifact, RoutingMetadata, UsageMetadata
+from cortexmux.schemas.decisions import DecisionAnswer
 
 
 class CortexResponse(BaseModel):
@@ -44,6 +45,13 @@ class StructuredResponse(CortexResponse):
     task: Literal[TaskType.STRUCTURED_OUTPUT] = TaskType.STRUCTURED_OUTPUT
     content: str
     parsed: Any
+
+
+class DecisionResponse(CortexResponse):
+    """Typed probabilities for every question in a decision request."""
+
+    task: Literal[TaskType.DECISION] = TaskType.DECISION
+    answers: dict[str, DecisionAnswer] = Field(min_length=1)
 
 
 class VisionResponse(CortexResponse):

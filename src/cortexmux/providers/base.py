@@ -28,6 +28,10 @@ class BaseProvider(ABC):
     async def list_models(self) -> list[ModelInfo]:
         """List normalized models or engines."""
 
+    def accepts_unlisted_model(self, model: str) -> bool:
+        """Allow an API-supported model absent from discovery, when applicable."""
+        return False
+
     @abstractmethod
     async def get_capabilities(self, model: str | None = None) -> list[ProviderCapability]:
         """Describe configured or introspected capabilities."""

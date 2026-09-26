@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
@@ -10,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.common import ChatMessage
+from cortexmux.schemas.decisions import DecisionQuestion, validate_decision_state
 
 
 class CortexRequest(BaseModel):
@@ -54,6 +56,46 @@ class StructuredOutputRequest(CortexRequest):
     json_schema: dict[str, Any] | None = None
     system: str | None = None
     think: bool | None = None
+
+
+class DecisionRequest(CortexRequest):
+    """Evaluate bounded state against typed, independent questions."""
+
+    task: Literal[TaskType.DECISION] = TaskType.DECISION
+    state: str | dict[str, Any] | list[Any]
+    questions: dict[str, DecisionQuestion] = Field(min_length=1, max_length=64)
+
+    @field_validator("state")
+    @classmethod
+    def state_is_bounded_json(
+        cls, value: str | dict[str, Any] | list[Any]
+    ) -> str | dict[str, Any] | list[Any]:
+        """Keep remote decision input JSON-compatible and bounded."""
+        return validate_decision_state(value)
+
+    @field_validator("questions")
+    @classmethod
+    def question_ids_are_bounded(
+        cls, value: dict[str, DecisionQuestion]
+    ) -> dict[str, DecisionQuestion]:
+        """Prevent empty or excessive question identifiers."""
+        if any(not key or len(key) > 100 for key in value):
+            raise ValueError("decision question IDs must contain 1 to 100 characters")
+        return value
+
+    @model_validator(mode="after")
+    def payload_is_bounded(self) -> DecisionRequest:
+        """Bound the entire remote decision payload, including question criteria."""
+        payload = {
+            "state": self.state,
+            "questions": {
+                key: question.model_dump(mode="json", exclude_none=True)
+                for key, question in self.questions.items()
+            },
+        }
+        if len(json.dumps(payload, ensure_ascii=False)) > 120_000:
+            raise ValueError("decision payload exceeds the character limit")
+        return self
 
 
 class VisionRequest(CortexRequest):
@@ -132,6 +174,7 @@ RequestUnion = Annotated[
     | VisionRequest
     | EmbeddingRequest
     | ImageGenerationRequest
-    | DataAnalysisRequest,
+    | DataAnalysisRequest
+    | DecisionRequest,
     Field(discriminator="task"),
 ]

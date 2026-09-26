@@ -19,6 +19,8 @@ from cortexmux.providers.data.schemas import (
     OperationType,
 )
 
+_MAX_TIME_SERIES_BINS = 10_000
+
 
 class PandasEngine(BaseDataEngine):
     """Baseline engine for safe, whitelisted dataframe operations."""
@@ -200,6 +202,22 @@ class PandasEngine(BaseDataEngine):
             converted[date_column] = pd.to_datetime(converted[date_column], errors="coerce")
             indexed = converted.dropna(subset=[date_column]).set_index(date_column)
             frequency = step.frequency or "ME"
+            if not indexed.empty:
+                try:
+                    cutoff = pd.date_range(
+                        start=indexed.index.min(),
+                        periods=_MAX_TIME_SERIES_BINS - 2,
+                        freq=frequency,
+                    )[-1]
+                except (OverflowError, pd.errors.OutOfBoundsDatetime):
+                    # A cutoff beyond Pandas' timestamp range cannot be reached by the input.
+                    pass
+                else:
+                    if indexed.index.max() >= cutoff:
+                        raise DataAnalysisError(
+                            "Time series exceeds the bin limit.",
+                            maximum=_MAX_TIME_SERIES_BINS,
+                        )
             data = (
                 indexed[value_column].resample(frequency).sum().reset_index()
                 if value_column
