@@ -4,6 +4,15 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc7] - 2026-09-28
+
+### Added
+
+- Add a synthetic TypeSafe live probe that records exact prompts and normalized
+  responses in ignored local files for threshold review.
+- Add a separate TypeSafe contract probe for live Noul, Choice and Score input/output
+  verification and offline replay of saved prompt/response logs.
+
 ## [0.6.0rc6] - 2026-09-26
 
 ### Fixed
