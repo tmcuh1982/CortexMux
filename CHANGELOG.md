@@ -4,6 +4,13 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc8] - 2026-09-28
+
+### Fixed
+
+- Combine nested asynchronous context managers in the Codex streaming path so
+  Ruff's SIM117 check passes in CI without changing stream behavior.
+
 ## [0.6.0rc7] - 2026-09-28
 
 ### Added

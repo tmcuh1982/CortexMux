@@ -317,12 +317,14 @@ class CodexProvider(BaseProvider):
         async def produce() -> None:
             try:
                 async with asyncio.timeout(request.timeout or self.client.config.timeout_seconds):
-                    async with self._turn_lock:
-                        async with contextlib.aclosing(
+                    async with (
+                        self._turn_lock,
+                        contextlib.aclosing(
                             self._stream_turn(request, options, prompt, system)
-                        ) as source:
-                            async for item in source:
-                                await queue.put(item)
+                        ) as source,
+                    ):
+                        async for item in source:
+                            await queue.put(item)
             except TimeoutError:
                 await queue.put(CodexError("timeout"))
             except asyncio.CancelledError:
