@@ -38,6 +38,8 @@ class UsageMetadata(BaseModel):
     prompt_tokens: int | None = Field(default=None, ge=0)
     completion_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
+    cache_hit_tokens: int | None = Field(default=None, ge=0)
+    cache_miss_tokens: int | None = Field(default=None, ge=0)
     load_duration_ns: int | None = Field(default=None, ge=0)
     evaluation_duration_ns: int | None = Field(default=None, ge=0)
 

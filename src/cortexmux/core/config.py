@@ -122,6 +122,42 @@ class GrokConfig(BaseModel):
     defaults: GrokDefaults = Field(default_factory=GrokDefaults)
 
 
+class DeepSeekDefaults(BaseModel):
+    """Explicit model IDs for DeepSeek text tasks."""
+
+    chat: str | None = None
+    text_generation: str | None = None
+    structured_output: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def empty_is_unset(cls, value: object) -> object:
+        """Treat empty strings as an absent model default."""
+        return None if value == "" else value
+
+
+class DeepSeekConfig(BaseModel):
+    """Explicit opt-in DeepSeek Chat Completions configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://api.deepseek.com"
+    timeout_seconds: float = Field(default=120, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="DEEPSEEK_API_KEY", min_length=1)
+    defaults: DeepSeekDefaults = Field(default_factory=DeepSeekDefaults)
+
+
+class QwenCloudConfig(BaseModel):
+    """Explicit opt-in Qwen Cloud Chat Completions configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://maas.qwencloudapi.com/compatible-mode/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="DASHSCOPE_API_KEY", min_length=1)
+    defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
+
+
 class TypeSafeConfig(BaseModel):
     """Explicit opt-in configuration for TypeSafe decision models."""
 
@@ -175,6 +211,8 @@ class ProvidersConfig(BaseModel):
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     grok: GrokConfig = Field(default_factory=GrokConfig)
+    deepseek: DeepSeekConfig = Field(default_factory=DeepSeekConfig)
+    qwencloud: QwenCloudConfig = Field(default_factory=QwenCloudConfig)
     typesafe: TypeSafeConfig = Field(default_factory=TypeSafeConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
@@ -313,7 +351,7 @@ class CortexMuxConfig(BaseModel):
         """Return a provider's configured default model for a task."""
         if provider == "typesafe" and task == TaskType.DECISION:
             return self.providers.typesafe.default_model
-        if provider in {"ollama", "openai", "gemini", "grok"}:
+        if provider in {"ollama", "openai", "gemini", "grok", "deepseek", "qwencloud"}:
             defaults = getattr(self.providers, provider).defaults
             value = getattr(defaults, task.value, None)
             return value if isinstance(value, str) else None
@@ -376,6 +414,10 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
         "CORTEXMUX_GEMINI_ENABLED": ("providers", "gemini", "enabled"),
         "CORTEXMUX_GROK_BASE_URL": ("providers", "grok", "base_url"),
         "CORTEXMUX_GROK_ENABLED": ("providers", "grok", "enabled"),
+        "CORTEXMUX_DEEPSEEK_BASE_URL": ("providers", "deepseek", "base_url"),
+        "CORTEXMUX_DEEPSEEK_ENABLED": ("providers", "deepseek", "enabled"),
+        "CORTEXMUX_QWENCLOUD_BASE_URL": ("providers", "qwencloud", "base_url"),
+        "CORTEXMUX_QWENCLOUD_ENABLED": ("providers", "qwencloud", "enabled"),
         "CORTEXMUX_TYPESAFE_BASE_URL": ("providers", "typesafe", "base_url"),
         "CORTEXMUX_TYPESAFE_ENABLED": ("providers", "typesafe", "enabled"),
         "CORTEXMUX_COMFYUI_BASE_URL": ("providers", "comfyui", "base_url"),
@@ -406,6 +448,8 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
             "CORTEXMUX_OPENAI_ENABLED",
             "CORTEXMUX_GEMINI_ENABLED",
             "CORTEXMUX_GROK_ENABLED",
+            "CORTEXMUX_DEEPSEEK_ENABLED",
+            "CORTEXMUX_QWENCLOUD_ENABLED",
             "CORTEXMUX_TYPESAFE_ENABLED",
         }:
             value = value.lower() in {"1", "true", "yes", "on"}

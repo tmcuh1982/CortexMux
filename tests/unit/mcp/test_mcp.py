@@ -84,7 +84,7 @@ async def test_tool_allowlist_argument_bounds_and_no_environment_leak(
 @pytest.mark.asyncio
 async def test_timeout_terminates_the_stdio_subprocess() -> None:
     """Bound a stalled server call and reap its child process during shutdown."""
-    client = client_for(mode="timeout", timeout=0.05)
+    client = client_for(mode="timeout", timeout=0.5)
     try:
         with pytest.raises(ProviderTimeoutError):
             await client.call_tool("capitalforge_source_catalog")

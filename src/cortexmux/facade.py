@@ -41,6 +41,8 @@ from cortexmux.providers.comfyui import (
     WorkflowDefinition,
 )
 from cortexmux.providers.data import DataAnalysisProvider, MathVerifier
+from cortexmux.providers.deepseek import DeepSeekClient, DeepSeekProvider
+from cortexmux.providers.deepseek.client import validate_deepseek_base_url
 from cortexmux.providers.gemini import GeminiClient, GeminiProvider
 from cortexmux.providers.gemini.client import validate_gemini_base_url
 from cortexmux.providers.grok import GrokClient, GrokProvider
@@ -53,6 +55,8 @@ from cortexmux.providers.openai import (
     OpenAIProvider,
     OpenAIReasoningEffort,
 )
+from cortexmux.providers.qwencloud import QwenCloudClient, QwenCloudProvider
+from cortexmux.providers.qwencloud.client import validate_qwencloud_base_url
 from cortexmux.providers.typesafe import TypeSafeClient, TypeSafeProvider
 from cortexmux.schemas.calculations import CalculationClaim, CalculationVerification
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
@@ -278,6 +282,68 @@ class CortexMux:
                         retry_base_delay_seconds=grok_settings.retry_base_delay_seconds,
                         retry_max_delay_seconds=grok_settings.retry_max_delay_seconds,
                     )
+                )
+            )
+        if self.config.providers.deepseek.enabled:
+            deepseek_settings = self.config.providers.deepseek
+            url = validate_provider_url(
+                validate_deepseek_base_url(deepseek_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                deepseek_settings.api_key.get_secret_value()
+                if deepseek_settings.api_key is not None
+                else os.environ.get(deepseek_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "DeepSeek is enabled but its API key is unavailable.",
+                    environment_variable=deepseek_settings.api_key_env,
+                )
+            self.registry.register(
+                DeepSeekProvider(
+                    DeepSeekClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=deepseek_settings.timeout_seconds,
+                    ),
+                    models=[
+                        model
+                        for model in deepseek_settings.defaults.model_dump().values()
+                        if isinstance(model, str)
+                    ],
+                )
+            )
+        if self.config.providers.qwencloud.enabled:
+            qwencloud_settings = self.config.providers.qwencloud
+            url = validate_provider_url(
+                validate_qwencloud_base_url(qwencloud_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                qwencloud_settings.api_key.get_secret_value()
+                if qwencloud_settings.api_key is not None
+                else os.environ.get(qwencloud_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "Qwen Cloud is enabled but its API key is unavailable.",
+                    environment_variable=qwencloud_settings.api_key_env,
+                )
+            self.registry.register(
+                QwenCloudProvider(
+                    QwenCloudClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=qwencloud_settings.timeout_seconds,
+                    ),
+                    models=[
+                        model
+                        for model in qwencloud_settings.defaults.model_dump().values()
+                        if isinstance(model, str)
+                    ],
                 )
             )
         if self.config.providers.typesafe.enabled:

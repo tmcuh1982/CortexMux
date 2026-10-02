@@ -40,6 +40,14 @@ authenticated xAI catalog. Local JSON validation, normalized token usage and
 the existing routing metadata also apply. See
 [Grok configuration, options and limitations](grok.md).
 
+## DeepSeek API
+
+The `deepseek` provider uses DeepSeek's Chat Completions API for non-streaming
+text, chat, and locally validated JSON. DeepSeek manages context caching
+automatically. CortexMux preserves message order and normalizes the provider's
+cache-hit and cache-miss token counters. See
+[DeepSeek configuration and cache behavior](deepseek.md).
+
 ## TypeSafe System One API
 
 The `typesafe` provider evaluates application-supplied state against typed

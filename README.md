@@ -18,8 +18,12 @@ surface is tested, but production deployments should pin the patch version.
   JSON/YAML recommendation manifests.
 - Native Ollama text, chat, JSON, vision, embedding, and incremental streaming.
 - Explicit opt-in OpenAI Responses API text, chat, and structured output.
+- Explicit opt-in Qwen Cloud text, chat, and structured output with separate
+  model routes from local Ollama.
 - Explicit opt-in Gemini API text, chat, and validated JSON through Google AI Studio.
 - Explicit opt-in Grok text, chat, and validated JSON through the xAI API.
+- Explicit opt-in DeepSeek text, chat, and validated JSON with automatic
+  context-cache usage reporting.
 - Explicit opt-in TypeSafe Jev decisions with typed questions and probabilities.
 - Opt-in asynchronous OpenAI Responses sessions with function tools and live steering.
 - Native ComfyUI workflow catalogs, typed progress, binding, queueing, and safe downloads.

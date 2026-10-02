@@ -8,6 +8,8 @@ Supported environment variables include `CORTEXMUX_OLLAMA_BASE_URL`,
 `CORTEXMUX_OPENAI_ENABLED`, `CORTEXMUX_OPENAI_BASE_URL`,
 `CORTEXMUX_GEMINI_ENABLED`, `CORTEXMUX_GEMINI_BASE_URL`,
 `CORTEXMUX_GROK_ENABLED`, `CORTEXMUX_GROK_BASE_URL`,
+`CORTEXMUX_DEEPSEEK_ENABLED`, `CORTEXMUX_DEEPSEEK_BASE_URL`,
+`CORTEXMUX_QWENCLOUD_ENABLED`, `CORTEXMUX_QWENCLOUD_BASE_URL`,
 `CORTEXMUX_TYPESAFE_ENABLED`, `CORTEXMUX_TYPESAFE_BASE_URL`,
 `CORTEXMUX_COMFYUI_BASE_URL`, `CORTEXMUX_OUTPUT_DIR`,
 `CORTEXMUX_ALLOW_REMOTE_HOSTS`, `CORTEXMUX_LOG_LEVEL`, task model defaults, and
@@ -42,6 +44,19 @@ Python `api_key` takes precedence. Its base URL defaults to `https://api.x.ai/v1
 and its timeout/retry settings match Gemini's. Configuring a key alone never
 enables the provider or changes local task defaults. Use IDs or aliases returned
 by `list_models("grok")`. See the [Grok setup guide](grok.md).
+
+DeepSeek is disabled by default. Enable `providers.deepseek.enabled`, approve
+`api.deepseek.com` under `core.approved_hosts`, and provide `DEEPSEEK_API_KEY`.
+Its base URL defaults to `https://api.deepseek.com`. Configure explicit task
+models under `providers.deepseek.defaults`. DeepSeek manages context caching
+automatically; CortexMux preserves message order and reports cache-hit and
+cache-miss token counts when the API returns them. See the
+[DeepSeek setup and caching guide](deepseek.md).
+
+Qwen Cloud is disabled by default. Enable `providers.qwencloud.enabled`, approve
+`maas.qwencloudapi.com` under `core.approved_hosts`, and supply
+`DASHSCOPE_API_KEY`. Configure a separate Qwen Cloud model for each task; local
+Ollama routes remain independent. See the [Qwen Cloud setup guide](qwencloud.md).
 
 TypeSafe decisions are also opt-in. Enable `providers.typesafe.enabled`, approve
 `api.typesafe.ai` under `core.approved_hosts`, and supply `TYPESAFE_API_KEY`.

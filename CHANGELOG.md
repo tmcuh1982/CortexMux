@@ -4,6 +4,16 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc9] - 2026-10-02
+
+### Added
+
+- Add an opt-in DeepSeek provider for text, chat, and locally verified JSON,
+  preserving cacheable message prefixes and exposing normalized cache-hit and
+  cache-miss token usage.
+- Add an opt-in Qwen Cloud provider for text, chat, and locally verified JSON
+  responses, with separate remote-host approval and model routing from Ollama.
+
 ## [0.6.0rc8] - 2026-09-28
 
 ### Fixed
