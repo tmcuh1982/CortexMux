@@ -69,6 +69,11 @@ DeepSeek defines `prompt_tokens` as the sum of cache-hit and cache-miss input
 tokens when both cache counters are returned. A missing counter remains `None`;
 CortexMux does not present an unavailable provider value as zero.
 
+If DeepSeek returns usage with an incomplete response or invalid structured
+output, CortexMux keeps the available normalized counters in the exception's
+`context["usage"]`. Incomplete responses also expose `finish_reason` in the
+exception context. The partial response text is excluded from diagnostics.
+
 The provider supports non-streaming text generation, chat, and JSON output.
 Allowed options are `max_tokens`, `temperature`, and `top_p`. Structured output
 uses JSON object mode and validates a supplied JSON Schema locally. It sends no

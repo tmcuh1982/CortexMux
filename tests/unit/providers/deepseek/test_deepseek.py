@@ -165,8 +165,15 @@ async def test_structured_output_is_verified_locally() -> None:
         },
     )
     assert (await provider.execute(request)).parsed == {"count": 2}
-    with pytest.raises(StructuredOutputValidationError):
+    with pytest.raises(StructuredOutputValidationError) as caught:
         await provider.execute(request)
+    assert caught.value.context["usage"] == {
+        "prompt_tokens": 80,
+        "completion_tokens": 3,
+        "total_tokens": 83,
+        "cache_hit_tokens": 64,
+        "cache_miss_tokens": 16,
+    }
 
 
 @pytest.mark.asyncio
@@ -176,8 +183,21 @@ async def test_invalid_options_and_incomplete_output_are_rejected() -> None:
         await provider.execute(
             TextGenerationRequest(model=MODEL, prompt="Hello", options={"tools": []})
         )
-    with pytest.raises(ProviderResponseError):
+    with pytest.raises(ProviderResponseError) as caught:
         await provider.execute(TextGenerationRequest(model=MODEL, prompt="Hello"))
+    assert caught.value.context == {
+        "provider": "deepseek",
+        "request_id": caught.value.context["request_id"],
+        "finish_reason": "length",
+        "usage": {
+            "prompt_tokens": 80,
+            "completion_tokens": 3,
+            "total_tokens": 83,
+            "cache_hit_tokens": 64,
+            "cache_miss_tokens": 16,
+        },
+    }
+    assert "partial" not in json.dumps(caught.value.to_dict())
 
 
 def test_opt_in_configuration_and_routing(monkeypatch: pytest.MonkeyPatch) -> None:

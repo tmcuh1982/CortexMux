@@ -4,6 +4,13 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [0.6.0rc10] - 2026-10-02
+
+### Fixed
+
+- Preserve DeepSeek's normalized token and cache usage in exception context
+  when a response is incomplete or its structured output fails validation.
+
 ## [0.6.0rc9] - 2026-10-02
 
 ### Added

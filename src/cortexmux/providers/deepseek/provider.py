@@ -137,7 +137,8 @@ class DeepSeekProvider(BaseProvider):
         data = await self.client.complete(
             payload, request_id=request.request_id, timeout=request.timeout
         )
-        content = _content(data, request.request_id)
+        usage = _usage(data)
+        content = _content(data, request.request_id, usage)
         actual_model = data.get("model")
         metadata: dict[str, Any] = {}
         if isinstance(data.get("id"), str):
@@ -147,7 +148,7 @@ class DeepSeekProvider(BaseProvider):
             "model": actual_model if isinstance(actual_model, str) else request.model,
             "request_id": request.request_id,
             "content": content,
-            "usage": _usage(data),
+            "usage": usage,
             "raw_metadata": metadata,
         }
         if isinstance(request, StructuredOutputRequest):
@@ -157,7 +158,9 @@ class DeepSeekProvider(BaseProvider):
                     validate_json_schema(parsed, request.json_schema)
             except ValueError:
                 raise StructuredOutputValidationError(
-                    "DeepSeek returned invalid structured output.", **context
+                    "DeepSeek returned invalid structured output.",
+                    **context,
+                    usage=_usage_context(usage),
                 ) from None
             return StructuredResponse(**common, parsed=parsed)
         if isinstance(request, ChatRequest):
@@ -169,15 +172,23 @@ class DeepSeekProvider(BaseProvider):
         await self.client.close()
 
 
-def _content(data: dict[str, Any], request_id: str) -> str:
-    context = {"provider": "deepseek", "request_id": request_id}
+def _content(data: dict[str, Any], request_id: str, usage: UsageMetadata | None) -> str:
+    context = {
+        "provider": "deepseek",
+        "request_id": request_id,
+        "usage": _usage_context(usage),
+    }
     choices = data.get("choices")
     if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
         raise ProviderResponseError("DeepSeek response has invalid choices.", **context)
     choice = choices[0]
     message = choice.get("message")
     if choice.get("finish_reason") != "stop" or not isinstance(message, dict):
-        raise ProviderResponseError("DeepSeek response is incomplete.", **context)
+        raise ProviderResponseError(
+            "DeepSeek response is incomplete.",
+            **context,
+            finish_reason=choice.get("finish_reason"),
+        )
     content = message.get("content")
     if message.get("role") != "assistant" or not isinstance(content, str) or not content:
         raise ProviderResponseError("DeepSeek response has no assistant text.", **context)
@@ -205,6 +216,13 @@ def _usage(data: dict[str, Any]) -> UsageMetadata | None:
         cache_hit_tokens=hit,
         cache_miss_tokens=miss,
     )
+
+
+def _usage_context(usage: UsageMetadata | None) -> dict[str, int] | None:
+    if usage is None:
+        return None
+    values = usage.model_dump(exclude_none=True)
+    return values or None
 
 
 def _non_negative_int(value: object) -> int | None:
