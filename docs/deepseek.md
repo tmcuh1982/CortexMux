@@ -33,6 +33,9 @@ with CortexMux.from_env() as mux:
         model="deepseek-flash",
     )
     print(response.content)
+    print(response.usage.prompt_tokens)
+    print(response.usage.completion_tokens)
+    print(response.usage.total_tokens)
     print(response.usage.cache_hit_tokens)
     print(response.usage.cache_miss_tokens)
 ```
@@ -51,6 +54,20 @@ When returned by DeepSeek, normalized usage contains `cache_hit_tokens` and
 OpenAI-compatible `prompt_tokens_details.cached_tokens` form. Cache population
 and reuse are best effort, and entries expire according to DeepSeek's service
 policy.
+
+Every completed response also exposes the standard normalized token counters:
+
+| Field | Meaning |
+| --- | --- |
+| `prompt_tokens` | Total input tokens, including cached and uncached input. |
+| `completion_tokens` | Tokens generated in the model response. |
+| `total_tokens` | Input and generated tokens combined. |
+| `cache_hit_tokens` | Input tokens served from DeepSeek's context cache. |
+| `cache_miss_tokens` | Input tokens that did not hit the context cache. |
+
+DeepSeek defines `prompt_tokens` as the sum of cache-hit and cache-miss input
+tokens when both cache counters are returned. A missing counter remains `None`;
+CortexMux does not present an unavailable provider value as zero.
 
 The provider supports non-streaming text generation, chat, and JSON output.
 Allowed options are `max_tokens`, `temperature`, and `top_p`. Structured output
