@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from cortexmux.core.exceptions import (
     ProviderUnavailableError,
     WorkflowValidationError,
 )
+from cortexmux.core.serialization import dump_yaml
 from cortexmux.providers.comfyui.workflow import InputBinding, WorkflowDefinition
 from cortexmux.schemas.progress import ProgressEvent
 from cortexmux.selection import load_qualification_suite, write_qualification_manifest
@@ -40,6 +42,20 @@ console = Console()
 error_console = Console(stderr=True)
 
 
+class OutputFormat(StrEnum):
+    """Supported CLI display formats."""
+
+    TEXT = "text"
+    JSON = "json"
+    YAML = "yaml"
+
+
+def _resolve_format(as_json: bool, output_format: OutputFormat | None) -> OutputFormat:
+    if as_json and output_format not in (None, OutputFormat.JSON):
+        raise typer.BadParameter("--json cannot be combined with --format text or yaml.")
+    return OutputFormat.JSON if as_json else (output_format or OutputFormat.TEXT)
+
+
 @app.command()
 def version() -> None:
     """Print the installed CortexMux version."""
@@ -47,16 +63,27 @@ def version() -> None:
 
 
 @app.command()
-def providers(as_json: bool = typer.Option(False, "--json")) -> None:
+def providers(
+    as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
+) -> None:
     """List registered providers."""
+    selected_format = _resolve_format(as_json, output_format)
     with CortexMux.from_env() as mux:
         names = [provider.name for provider in mux.registry.list()]
-    _display(names, as_json)
+    try:
+        _display(names, selected_format)
+    except CortexMuxError as exc:
+        _fail(exc)
 
 
 @app.command()
-def doctor(as_json: bool = typer.Option(False, "--json")) -> None:
+def doctor(
+    as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
+) -> None:
     """Diagnose configuration, optional dependencies, and local providers."""
+    selected_format = _resolve_format(as_json, output_format)
     try:
         with CortexMux.from_env() as mux:
             health = mux.health()
@@ -67,8 +94,8 @@ def doctor(as_json: bool = typer.Option(False, "--json")) -> None:
                 "output_dir_parent_exists": mux.config.core.output_dir.parent.exists(),
                 "optional_dependencies": _optional_status(),
             }
-        if as_json:
-            _display(payload, True)
+        if selected_format != OutputFormat.TEXT:
+            _display(payload, selected_format)
             return
         table = Table(title="CortexMux doctor")
         table.add_column("Provider")
@@ -91,12 +118,14 @@ def doctor(as_json: bool = typer.Option(False, "--json")) -> None:
 def models_list(
     provider: str = typer.Option(..., "--provider"),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """List normalized provider models."""
+    selected_format = _resolve_format(as_json, output_format)
     try:
         with CortexMux.from_env() as mux:
             models = mux.list_models(provider)
-        _display([model.model_dump(mode="json") for model in models], as_json)
+        _display([model.model_dump(mode="json") for model in models], selected_format)
     except CortexMuxError as exc:
         _fail(exc)
 
@@ -107,8 +136,11 @@ def models_qualify(
     output: Path = typer.Option(..., "--output", dir_okay=False),
     config: Path | None = typer.Option(None, "--config", exists=True, dir_okay=False),
     overwrite: bool = typer.Option(False, "--overwrite"),
+    as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Benchmark model configurations and write a portable recommendation manifest."""
+    selected_format = _resolve_format(as_json, output_format or OutputFormat.JSON)
     try:
         qualification_suite = load_qualification_suite(suite)
         with CortexMux.from_env(config_path=config) as mux:
@@ -121,7 +153,7 @@ def models_qualify(
                     item.model_dump(mode="json") for item in manifest.recommendations
                 ],
             },
-            True,
+            selected_format,
         )
     except (CortexMuxError, OSError, ValueError) as exc:
         _fail(exc)
@@ -133,9 +165,11 @@ def chat(
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Chat with a configured model."""
-    _run_response("chat", as_json, prompt=prompt, provider=provider, model=model)
+    selected_format = _resolve_format(as_json, output_format)
+    _run_response("chat", selected_format, prompt=prompt, provider=provider, model=model)
 
 
 @app.command()
@@ -144,9 +178,11 @@ def generate(
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Generate text with a configured model."""
-    _run_response("text_generation", as_json, prompt=prompt, provider=provider, model=model)
+    selected_format = _resolve_format(as_json, output_format)
+    _run_response("text_generation", selected_format, prompt=prompt, provider=provider, model=model)
 
 
 @app.command()
@@ -156,11 +192,13 @@ def vision(
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Analyze an image with a vision-capable model."""
+    selected_format = _resolve_format(as_json, output_format)
     _run_response(
         "vision",
-        as_json,
+        selected_format,
         images=[image],
         prompt=prompt,
         provider=provider,
@@ -174,9 +212,11 @@ def embed(
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Generate embeddings."""
-    _run_response("embedding", as_json, inputs=text, provider=provider, model=model)
+    selected_format = _resolve_format(as_json, output_format)
+    _run_response("embedding", selected_format, inputs=text, provider=provider, model=model)
 
 
 @image_app.command("generate")
@@ -187,8 +227,10 @@ def image_generate(
     checkpoint: str | None = typer.Option(None, "--checkpoint"),
     progress: bool = typer.Option(True, "--progress/--no-progress"),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Execute a ComfyUI workflow path or catalog name."""
+    selected_format = _resolve_format(as_json, output_format)
     try:
         binding_data = json.loads(bindings.read_text(encoding="utf-8")) if bindings else {}
         with CortexMux.from_env() as mux:
@@ -197,9 +239,11 @@ def image_generate(
                 workflow=workflow,
                 bindings=binding_data,
                 checkpoint=checkpoint,
-                on_progress=_display_progress if progress and not as_json else None,
+                on_progress=_display_progress
+                if progress and selected_format == OutputFormat.TEXT
+                else None,
             )
-        _response_output(response, as_json)
+        _response_output(response, selected_format)
     except (CortexMuxError, OSError, json.JSONDecodeError) as exc:
         _fail(exc)
 
@@ -214,8 +258,10 @@ def data_analyze(
     charts: bool = typer.Option(False, "--charts"),
     require_verified_calculations: bool = typer.Option(False, "--require-verified-calculations"),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Analyze a local tabular file deterministically."""
+    selected_format = _resolve_format(as_json, output_format)
     try:
         with CortexMux.from_env() as mux:
             response = mux.analyze_data(
@@ -227,8 +273,8 @@ def data_analyze(
                 create_charts=charts,
                 require_verified_calculations=require_verified_calculations,
             )
-        if as_json:
-            _response_output(response, True)
+        if selected_format != OutputFormat.TEXT:
+            _response_output(response, selected_format)
         else:
             console.print(response.interpretation or response.results)
             _display_calculation_verifications(response.calculation_verifications)
@@ -237,24 +283,32 @@ def data_analyze(
 
 
 @config_app.command("show")
-def config_show(as_json: bool = typer.Option(False, "--json")) -> None:
+def config_show(
+    as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
+) -> None:
     """Show effective redacted configuration."""
+    selected_format = _resolve_format(as_json, output_format)
     try:
         config = CortexMuxConfig.load()
-        _display(config.model_dump(mode="json"), as_json)
+        _display(config.model_dump(mode="json"), selected_format)
     except CortexMuxError as exc:
         _fail(exc)
 
 
 @workflows_app.command("list")
-def workflows_list(as_json: bool = typer.Option(False, "--json")) -> None:
+def workflows_list(
+    as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
+) -> None:
     """List reusable workflows in the configured ComfyUI catalog."""
+    selected_format = _resolve_format(as_json, output_format)
     try:
         with CortexMux.from_env() as mux:
             workflows = mux.list_workflows()
         payload = [workflow.model_dump(mode="json") for workflow in workflows]
-        if as_json:
-            _display(payload, True)
+        if selected_format != OutputFormat.TEXT:
+            _display(payload, selected_format)
             return
         table = Table(title="ComfyUI workflow catalog")
         table.add_column("Name")
@@ -277,15 +331,17 @@ def workflows_list(as_json: bool = typer.Option(False, "--json")) -> None:
 def workflows_show(
     name: str = typer.Argument(...),
     as_json: bool = typer.Option(False, "--json"),
+    output_format: OutputFormat | None = typer.Option(None, "--format"),
 ) -> None:
     """Show one reusable workflow catalog entry."""
+    selected_format = _resolve_format(as_json, output_format)
     try:
         with CortexMux.from_env() as mux:
             workflows = mux.list_workflows()
         workflow = next((item for item in workflows if item.name == name), None)
         if workflow is None:
             raise WorkflowValidationError("Workflow is not present in the catalog.", name=name)
-        _display(workflow.model_dump(mode="json"), as_json)
+        _display(workflow.model_dump(mode="json"), selected_format)
     except CortexMuxError as exc:
         _fail(exc)
 
@@ -310,24 +366,28 @@ def workflows_validate(
         _fail(exc)
 
 
-def _run_response(task: str, as_json: bool, **fields: Any) -> None:
+def _run_response(task: str, selected_format: OutputFormat, **fields: Any) -> None:
     try:
         with CortexMux.from_env() as mux:
             response = mux.chat(**fields) if task == "chat" else mux.run(task, **fields)
-        _response_output(response, as_json)
+        _response_output(response, selected_format)
     except CortexMuxError as exc:
         _fail(exc)
 
 
-def _response_output(response: Any, as_json: bool, text_field: str = "content") -> None:
-    if as_json:
-        _display(response.model_dump(mode="json"), True)
+def _response_output(
+    response: Any, selected_format: OutputFormat, text_field: str = "content"
+) -> None:
+    if selected_format != OutputFormat.TEXT:
+        _display(response.model_dump(mode="json"), selected_format)
     else:
         console.print(getattr(response, text_field, response))
 
 
-def _display(value: Any, as_json: bool) -> None:
-    if as_json:
+def _display(value: Any, selected_format: OutputFormat) -> None:
+    if selected_format == OutputFormat.YAML:
+        typer.echo(dump_yaml(value), nl=False)
+    elif selected_format == OutputFormat.JSON:
         console.print_json(json.dumps(value, default=str))
     else:
         console.print(value)
@@ -367,7 +427,7 @@ def _optional_status() -> dict[str, bool]:
 
 
 def _fail(exc: BaseException) -> None:
-    error_console.print(f"[red]{exc}[/red]")
+    error_console.print(str(exc), style="red", markup=False)
     if isinstance(exc, ConfigurationError):
         raise typer.Exit(code=2)
     if isinstance(exc, ProviderUnavailableError):

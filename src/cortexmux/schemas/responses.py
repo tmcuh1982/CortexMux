@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from cortexmux.core.serialization import dump_yaml
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.calculations import CalculationVerification
 from cortexmux.schemas.common import ImageArtifact, RoutingMetadata, UsageMetadata
@@ -22,6 +23,14 @@ class CortexResponse(BaseModel):
     routing: RoutingMetadata | None = None
     usage: UsageMetadata | None = None
     raw_metadata: dict[str, Any] | None = None
+
+    def to_yaml(self) -> str:
+        """Export the complete response as YAML; requires ``cortexmux[yaml]``.
+
+        Uses the same JSON-compatible values as ``model_dump(mode="json")``,
+        including normalized metadata and validated structured data.
+        """
+        return dump_yaml(self.model_dump(mode="json"))
 
 
 class TextResponse(CortexResponse):

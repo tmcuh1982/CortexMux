@@ -296,7 +296,10 @@ cortexmux image generate --workflow text-to-image --prompt "A local workflow"
 cortexmux data analyze sales.csv --engine auto
 ```
 
-Commands that return structured values support `--json`.
+Commands that support `--json` also accept `--format text|json|yaml`.
+Install `cortexmux[yaml]` for YAML exports. Python responses expose
+`response.to_yaml()`; see [output formats](docs/output-formats.md) for examples
+and compatibility details.
 See [model qualification](docs/model-qualification.md) for candidate-specific
 options, scoring, OpenAI opt-in, and portable manifests.
 

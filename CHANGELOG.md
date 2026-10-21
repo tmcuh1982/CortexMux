@@ -4,6 +4,13 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Add optional `to_yaml()` exports on normalized responses and CLI
+  `--format text|json|yaml` selection, preserving `--json` and existing defaults.
+  YAML uses the existing `cortexmux[yaml]` extra and safe serialization of
+  JSON-compatible Pydantic values.
+
 ## [0.6.0rc10] - 2026-10-02
 
 ### Fixed
