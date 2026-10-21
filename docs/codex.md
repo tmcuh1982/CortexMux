@@ -1,4 +1,4 @@
-# Codex subscription provider (0.6.0 release candidate)
+# Codex subscription provider
 
 `codex` is an explicit opt-in provider using the official local
 `codex app-server --listen stdio://` protocol. It sends supplied text to the
@@ -201,7 +201,7 @@ install/copy the approved official CortexMux release into
 Do not use an editable install, symlink, `PYTHONPATH` pointing to this checkout,
 or a development-path dependency in UniversRobot.
 
-Candidate version: `0.6.0rc3`. Build a wheel and source archive with
+Current release: `1.0.0`. Build a wheel and source archive with
 `python -m build`, then `twine check dist/*`. The existing tag-triggered workflow
 uploads distribution artifacts. UniversRobot remains unchanged and consumes the
 published artifacts through its existing release process.

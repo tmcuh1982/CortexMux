@@ -8,8 +8,8 @@
 
 CortexMux is a modular, local-first Python library for routing AI tasks across
 language models, vision models, ComfyUI image workflows, and deterministic
-data-analysis engines. Version 0.5.2 is an alpha-quality stable release: its public
-surface is tested, but production deployments should pin the patch version.
+data-analysis engines. Version 1.0.0 is the first major stable release.
+See the [release notes](docs/release-1.0.0.md) for features and validation.
 
 ## Features
 
