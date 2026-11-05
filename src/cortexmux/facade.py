@@ -47,6 +47,8 @@ from cortexmux.providers.gemini import GeminiClient, GeminiProvider
 from cortexmux.providers.gemini.client import validate_gemini_base_url
 from cortexmux.providers.grok import GrokClient, GrokProvider
 from cortexmux.providers.grok.client import validate_grok_base_url
+from cortexmux.providers.mlx import MLXClient, MLXProvider
+from cortexmux.providers.mlx.client import validate_mlx_base_url
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
 from cortexmux.providers.openai import (
     OpenAIAsyncSession,
@@ -344,6 +346,38 @@ class CortexMux:
                         for model in qwencloud_settings.defaults.model_dump().values()
                         if isinstance(model, str)
                     ],
+                )
+            )
+        for mlx_name, mlx_settings in (
+            ("mlx", self.config.providers.mlx),
+            ("mlx_lm", self.config.providers.mlx_lm),
+            ("mlx_vlm", self.config.providers.mlx_vlm),
+        ):
+            if not mlx_settings.enabled:
+                continue
+            url = validate_provider_url(
+                validate_mlx_base_url(mlx_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            self.registry.register(
+                MLXProvider(
+                    MLXClient(
+                        url,
+                        api_key=(
+                            mlx_settings.api_key.get_secret_value()
+                            if mlx_settings.api_key is not None
+                            else os.environ.get(mlx_settings.api_key_env)
+                        ),
+                        timeout=mlx_settings.timeout_seconds,
+                        provider_name=mlx_name,
+                    ),
+                    models=[
+                        model
+                        for model in mlx_settings.defaults.model_dump().values()
+                        if isinstance(model, str)
+                    ],
+                    name=mlx_name,
                 )
             )
         if self.config.providers.typesafe.enabled:

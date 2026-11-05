@@ -4,6 +4,16 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-05
+
+### Added
+
+- Support independent `mlx_lm` and `mlx_vlm` text endpoints with separate
+  ports, model defaults, credentials, and routing identities.
+- Add an opt-in `mlx` provider for direct Mac Studio connections using a
+  configurable IP and port in `base_url`, explicit host approval, optional bearer
+  authentication, and non-streaming text, chat, and locally validated JSON output.
+
 ## [1.0.0] - 2026-10-21
 
 ### Added

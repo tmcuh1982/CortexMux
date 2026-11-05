@@ -160,3 +160,10 @@ configuration and read-only safety boundary.
 
 The opt-in `codex` provider supports ChatGPT-managed login, text/structured
 responses and account limits through local App Server stdio. See [Codex setup and limitations](codex.md).
+
+## MLX server
+
+The opt-in `mlx` provider connects to an MLX server using a configurable
+`providers.mlx.base_url` such as `http://192.168.1.50:8080/v1`. Approve the Mac
+Studio IP under `core.approved_hosts` and configure task model defaults.
+Authentication is optional. See [MLX setup and supported tasks](mlx.md).

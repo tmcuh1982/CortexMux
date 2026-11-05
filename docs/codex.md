@@ -201,7 +201,7 @@ install/copy the approved official CortexMux release into
 Do not use an editable install, symlink, `PYTHONPATH` pointing to this checkout,
 or a development-path dependency in UniversRobot.
 
-Current release: `1.0.0`. Build a wheel and source archive with
+Current release: `1.1.0`. Build a wheel and source archive with
 `python -m build`, then `twine check dist/*`. The existing tag-triggered workflow
 uploads distribution artifacts. UniversRobot remains unchanged and consumes the
 published artifacts through its existing release process.

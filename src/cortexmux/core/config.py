@@ -158,6 +158,17 @@ class QwenCloudConfig(BaseModel):
     defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
 
 
+class MLXConfig(BaseModel):
+    """Opt-in MLX server configuration; base_url includes the host IP and port."""
+
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:8080/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="MLX_API_KEY", min_length=1)
+    defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
+
+
 class TypeSafeConfig(BaseModel):
     """Explicit opt-in configuration for TypeSafe decision models."""
 
@@ -213,6 +224,9 @@ class ProvidersConfig(BaseModel):
     grok: GrokConfig = Field(default_factory=GrokConfig)
     deepseek: DeepSeekConfig = Field(default_factory=DeepSeekConfig)
     qwencloud: QwenCloudConfig = Field(default_factory=QwenCloudConfig)
+    mlx: MLXConfig = Field(default_factory=MLXConfig)
+    mlx_lm: MLXConfig = Field(default_factory=MLXConfig)
+    mlx_vlm: MLXConfig = Field(default_factory=MLXConfig)
     typesafe: TypeSafeConfig = Field(default_factory=TypeSafeConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
@@ -351,7 +365,17 @@ class CortexMuxConfig(BaseModel):
         """Return a provider's configured default model for a task."""
         if provider == "typesafe" and task == TaskType.DECISION:
             return self.providers.typesafe.default_model
-        if provider in {"ollama", "openai", "gemini", "grok", "deepseek", "qwencloud"}:
+        if provider in {
+            "ollama",
+            "openai",
+            "gemini",
+            "grok",
+            "deepseek",
+            "qwencloud",
+            "mlx",
+            "mlx_lm",
+            "mlx_vlm",
+        }:
             defaults = getattr(self.providers, provider).defaults
             value = getattr(defaults, task.value, None)
             return value if isinstance(value, str) else None
@@ -418,6 +442,12 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
         "CORTEXMUX_DEEPSEEK_ENABLED": ("providers", "deepseek", "enabled"),
         "CORTEXMUX_QWENCLOUD_BASE_URL": ("providers", "qwencloud", "base_url"),
         "CORTEXMUX_QWENCLOUD_ENABLED": ("providers", "qwencloud", "enabled"),
+        "CORTEXMUX_MLX_BASE_URL": ("providers", "mlx", "base_url"),
+        "CORTEXMUX_MLX_ENABLED": ("providers", "mlx", "enabled"),
+        "CORTEXMUX_MLX_LM_BASE_URL": ("providers", "mlx_lm", "base_url"),
+        "CORTEXMUX_MLX_LM_ENABLED": ("providers", "mlx_lm", "enabled"),
+        "CORTEXMUX_MLX_VLM_BASE_URL": ("providers", "mlx_vlm", "base_url"),
+        "CORTEXMUX_MLX_VLM_ENABLED": ("providers", "mlx_vlm", "enabled"),
         "CORTEXMUX_TYPESAFE_BASE_URL": ("providers", "typesafe", "base_url"),
         "CORTEXMUX_TYPESAFE_ENABLED": ("providers", "typesafe", "enabled"),
         "CORTEXMUX_COMFYUI_BASE_URL": ("providers", "comfyui", "base_url"),
@@ -451,6 +481,9 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
             "CORTEXMUX_DEEPSEEK_ENABLED",
             "CORTEXMUX_QWENCLOUD_ENABLED",
             "CORTEXMUX_TYPESAFE_ENABLED",
+            "CORTEXMUX_MLX_ENABLED",
+            "CORTEXMUX_MLX_LM_ENABLED",
+            "CORTEXMUX_MLX_VLM_ENABLED",
         }:
             value = value.lower() in {"1", "true", "yes", "on"}
         cursor = result

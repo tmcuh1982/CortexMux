@@ -150,3 +150,25 @@ max_text_characters = 100000
 max_redirects = 3
 max_tables = 20
 max_table_rows = 1000
+
+# Direct MLX server connection (approve the IP in core.approved_hosts first).
+[providers.mlx]
+enabled = false
+base_url = "http://127.0.0.1:8080/v1"
+timeout_seconds = 120
+
+# Set these to the actual model identifier served on your Mac Studio.
+# [providers.mlx.defaults]
+# chat = "your-served-model"
+# text_generation = "your-served-model"
+# structured_output = "your-served-model"
+
+# Optional separate MLX-LM / MLX-VLM text servers; approve the hostname in core.
+[providers.mlx_lm]
+enabled = false
+base_url = "http://127.0.0.1:8080/v1"
+
+[providers.mlx_vlm]
+enabled = false
+base_url = "http://127.0.0.1:8081/v1"
+# MLX-VLM currently supports text calls only through this adapter.
