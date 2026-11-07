@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from cortexmux.core.serialization import dump_yaml
+from cortexmux.core.serialization import dump_markdown, dump_yaml
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.calculations import CalculationVerification
 from cortexmux.schemas.common import ImageArtifact, RoutingMetadata, UsageMetadata
@@ -32,12 +32,20 @@ class CortexResponse(BaseModel):
         """
         return dump_yaml(self.model_dump(mode="json"))
 
+    def to_markdown(self) -> str:
+        """Export the normalized response as a Markdown document."""
+        return dump_markdown(self.model_dump(mode="json"))
+
 
 class TextResponse(CortexResponse):
     """Normalized generated text."""
 
     task: Literal[TaskType.TEXT_GENERATION] = TaskType.TEXT_GENERATION
     content: str
+
+    def to_markdown(self) -> str:
+        """Return the generated text as Markdown without rewriting it."""
+        return self.content
 
 
 class ChatResponse(CortexResponse):
@@ -46,6 +54,10 @@ class ChatResponse(CortexResponse):
     task: Literal[TaskType.CHAT] = TaskType.CHAT
     content: str
     role: str = "assistant"
+
+    def to_markdown(self) -> str:
+        """Return the assistant's text as Markdown without rewriting it."""
+        return self.content
 
 
 class StructuredResponse(CortexResponse):
@@ -68,6 +80,10 @@ class VisionResponse(CortexResponse):
 
     task: Literal[TaskType.VISION] = TaskType.VISION
     content: str
+
+    def to_markdown(self) -> str:
+        """Return the vision analysis as Markdown without rewriting it."""
+        return self.content
 
 
 class EmbeddingResponse(CortexResponse):
@@ -101,6 +117,10 @@ class DataAnalysisResponse(CortexResponse):
     calculation_verifications: list[CalculationVerification] = Field(default_factory=list)
     math_verification_passed: bool | None = None
     disclosure: dict[str, Any] = Field(default_factory=dict)
+
+    def to_markdown(self) -> str:
+        """Return the analysis report with the accepted interpretation, if any."""
+        return self.report_markdown
 
 
 class StreamChunk(BaseModel):

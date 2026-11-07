@@ -4,6 +4,13 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Accept local UTF-8 Markdown files as CLI prompts, embedding inputs, and
+  analysis instructions.
+- Add `response.to_markdown()` and CLI `--format markdown` (alias `md`), using
+  generated text, analysis reports, or fenced structured data as appropriate.
+
 ## [1.1.0] - 2026-11-05
 
 ### Added

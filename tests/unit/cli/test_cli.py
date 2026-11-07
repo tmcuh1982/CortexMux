@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from typer.testing import CliRunner
@@ -333,7 +334,13 @@ def test_configuration_yaml_redaction(
 
 
 @pytest.mark.parametrize(
-    "flags", [["--format", "xml"], ["--json", "--format", "yaml"], ["--json", "--format", "text"]]
+    "flags",
+    [
+        ["--format", "xml"],
+        ["--json", "--format", "yaml"],
+        ["--json", "--format", "text"],
+        ["--json", "--format", "md"],
+    ],
 )
 def test_invalid_formats_fail_before_facade_use(
     monkeypatch: pytest.MonkeyPatch, flags: list[str]
@@ -434,3 +441,108 @@ def test_qualification_yaml_summary_preserves_json_manifest(fake_mux: None, tmp_
         "recommendations": [],
     }
     assert json.loads(manifest.read_text(encoding="utf-8"))["recommendations"] == []
+
+
+@pytest.mark.parametrize(
+    ("command", "method"),
+    [
+        (["chat", "--model", "model"], "chat"),
+        (["generate", "--model", "model"], "run"),
+        (["vision", "--model", "model"], "run"),
+        (["image", "generate", "--workflow", "demo"], "generate_image"),
+    ],
+)
+def test_cli_markdown_prompt_files(
+    fake_mux: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: list[str], method: str
+) -> None:
+    prompt = "# Analyse\r\n\r\n- Vérifie `prix`\r\n"
+    path = tmp_path / "consigne.md"
+    path.write_bytes(prompt.encode("utf-8-sig"))
+    if command[0] == "vision":
+        image = tmp_path / "input.png"
+        image.write_bytes(b"image")
+        command = [*command, "--image", str(image)]
+    spy = Mock(wraps=getattr(FakeMux(), method))
+    monkeypatch.setattr(FakeMux, method, spy)
+    result = runner.invoke(app, [*command, "--prompt-file", str(path), "--format", "markdown"])
+    assert result.exit_code == 0, result.output
+    args, kwargs = spy.call_args
+    if method == "generate_image":
+        assert args[0] == prompt
+        assert kwargs["on_progress"] is None
+        assert json.loads(result.stdout.split("\n", 1)[1].removesuffix("```\n"))["images"]
+    else:
+        assert kwargs["prompt"] == prompt
+
+
+def test_chat_markdown_is_written_verbatim(fake_mux: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    document = "# Été\n\n**Texte** et `[red]literal[/red]`\n\n```python\nprint(1)\n```"
+    response = ChatResponse(provider="fake", request_id="r", content=document)
+    monkeypatch.setattr(FakeMux, "chat", Mock(return_value=response))
+    result = runner.invoke(app, ["chat", "--prompt", "hi", "--model", "model", "--format", "md"])
+    assert result.exit_code == 0
+    assert result.stdout == document
+
+
+def test_data_analysis_markdown_instruction_and_report(
+    fake_mux: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "data.csv"
+    source.write_text("a\n1\n", encoding="utf-8")
+    instruction = tmp_path / "instruction.md"
+    instruction.write_text("# Analyse\n\nCalcule la somme.\n", encoding="utf-8")
+    spy = Mock(wraps=FakeMux().analyze_data)
+    monkeypatch.setattr(FakeMux, "analyze_data", spy)
+    result = runner.invoke(
+        app,
+        ["data", "analyze", str(source), "--instruction-file", str(instruction), "--format", "md"],
+    )
+    assert result.exit_code == 0, result.output
+    assert spy.call_args.kwargs["instruction"] == instruction.read_text(encoding="utf-8")
+    assert result.stdout == "# Report\n"
+
+
+def test_embed_accepts_multiple_markdown_files(
+    fake_mux: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = [tmp_path / "a.md", tmp_path / "b.md"]
+    documents = ["# A\n", "# B\n"]
+    for path, document in zip(paths, documents, strict=True):
+        path.write_text(document, encoding="utf-8")
+    spy = Mock(wraps=FakeMux().run)
+    monkeypatch.setattr(FakeMux, "run", spy)
+    result = runner.invoke(
+        app,
+        ["embed", "--model", "model", "--text-file", str(paths[0]), "--text-file", str(paths[1])],
+    )
+    assert result.exit_code == 0, result.output
+    assert spy.call_args.kwargs["inputs"] == documents
+
+
+@pytest.mark.parametrize(
+    ("data", "extra", "message"),
+    [
+        (None, [], "regular local file"),
+        (b" \n", [], "must contain text"),
+        (b"\xff", [], "must be UTF-8"),
+        (b"x" * (1024 * 1024 + 1), [], "exceeds 1 MiB"),
+        (b"# Prompt", ["--prompt", "inline"], "exactly one"),
+    ],
+    ids=["missing", "blank", "encoding", "size", "conflict"],
+)
+def test_invalid_markdown_inputs_fail_before_facade_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    data: bytes | None,
+    extra: list[str],
+    message: str,
+) -> None:
+    path = tmp_path / "prompt.md"
+    if data is not None:
+        path.write_bytes(data)
+    facade = Mock(side_effect=AssertionError("Invalid input reached the facade"))
+    monkeypatch.setattr(CortexMux, "from_env", facade)
+    result = runner.invoke(app, ["chat", "--model", "model", "--prompt-file", str(path), *extra])
+    assert result.exit_code == 2
+    assert message in result.output
+    facade.assert_not_called()

@@ -299,10 +299,16 @@ cortexmux image generate --workflow text-to-image --prompt "A local workflow"
 cortexmux data analyze sales.csv --engine auto
 ```
 
-Commands that support `--json` also accept `--format text|json|yaml`.
-Install `cortexmux[yaml]` for YAML exports. Python responses expose
-`response.to_yaml()`; see [output formats](docs/output-formats.md) for examples
-and compatibility details.
+Commands that support `--json` also accept `--format text|json|yaml|markdown`.
+Use `--prompt-file prompt.md` to read a Markdown prompt:
+
+```bash
+cortexmux chat --model my-model --prompt-file prompt.md --format md > reply.md
+```
+
+Python responses expose `response.to_markdown()` and `response.to_yaml()`.
+Install `cortexmux[yaml]` for YAML. See [input files and output formats](docs/output-formats.md)
+for examples and compatibility details.
 See [model qualification](docs/model-qualification.md) for candidate-specific
 options, scoring, OpenAI opt-in, and portable manifests.
 

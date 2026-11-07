@@ -20,9 +20,10 @@ from cortexmux.core.exceptions import (
     ProviderUnavailableError,
     WorkflowValidationError,
 )
-from cortexmux.core.serialization import dump_yaml
+from cortexmux.core.serialization import dump_markdown, dump_yaml
 from cortexmux.providers.comfyui.workflow import InputBinding, WorkflowDefinition
 from cortexmux.schemas.progress import ProgressEvent
+from cortexmux.schemas.responses import CortexResponse
 from cortexmux.selection import load_qualification_suite, write_qualification_manifest
 from cortexmux.version import __version__
 
@@ -40,6 +41,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(workflows_app, name="workflows")
 console = Console()
 error_console = Console(stderr=True)
+_MAX_INPUT_FILE_BYTES = 1024 * 1024
 
 
 class OutputFormat(StrEnum):
@@ -48,12 +50,44 @@ class OutputFormat(StrEnum):
     TEXT = "text"
     JSON = "json"
     YAML = "yaml"
+    MARKDOWN = "markdown"
+    MD = "md"
 
 
 def _resolve_format(as_json: bool, output_format: OutputFormat | None) -> OutputFormat:
     if as_json and output_format not in (None, OutputFormat.JSON):
-        raise typer.BadParameter("--json cannot be combined with --format text or yaml.")
+        raise typer.BadParameter("--json can only be combined with --format json.")
+    if output_format == OutputFormat.MD:
+        return OutputFormat.MARKDOWN
     return OutputFormat.JSON if as_json else (output_format or OutputFormat.TEXT)
+
+
+def _read_text_file(path: Path, option: str) -> str:
+    try:
+        if not path.is_file():
+            raise typer.BadParameter("Expected a regular local file.", param_hint=option)
+        with path.open("rb") as source:
+            data = source.read(_MAX_INPUT_FILE_BYTES + 1)
+    except OSError as exc:
+        raise typer.BadParameter("Could not read the local file.", param_hint=option) from exc
+    if len(data) > _MAX_INPUT_FILE_BYTES:
+        raise typer.BadParameter("Input file exceeds 1 MiB.", param_hint=option)
+    try:
+        content = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise typer.BadParameter("Input file must be UTF-8.", param_hint=option) from exc
+    if not content.strip():
+        raise typer.BadParameter("Input file must contain text.", param_hint=option)
+    return content
+
+
+def _resolve_prompt(prompt: str | None, prompt_file: Path | None) -> str:
+    if (prompt is None) == (prompt_file is None):
+        raise typer.BadParameter("Provide exactly one of --prompt or --prompt-file.")
+    if prompt_file is not None:
+        return _read_text_file(prompt_file, "--prompt-file")
+    assert prompt is not None
+    return prompt
 
 
 @app.command()
@@ -161,38 +195,59 @@ def models_qualify(
 
 @app.command()
 def chat(
-    prompt: str = typer.Option(..., "--prompt"),
+    prompt: str | None = typer.Option(None, "--prompt"),
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
     output_format: OutputFormat | None = typer.Option(None, "--format"),
+    prompt_file: Path | None = typer.Option(
+        None, "--prompt-file", help="Read a UTF-8 prompt file."
+    ),
 ) -> None:
     """Chat with a configured model."""
     selected_format = _resolve_format(as_json, output_format)
-    _run_response("chat", selected_format, prompt=prompt, provider=provider, model=model)
+    _run_response(
+        "chat",
+        selected_format,
+        prompt=_resolve_prompt(prompt, prompt_file),
+        provider=provider,
+        model=model,
+    )
 
 
 @app.command()
 def generate(
-    prompt: str = typer.Option(..., "--prompt"),
+    prompt: str | None = typer.Option(None, "--prompt"),
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
     output_format: OutputFormat | None = typer.Option(None, "--format"),
+    prompt_file: Path | None = typer.Option(
+        None, "--prompt-file", help="Read a UTF-8 prompt file."
+    ),
 ) -> None:
     """Generate text with a configured model."""
     selected_format = _resolve_format(as_json, output_format)
-    _run_response("text_generation", selected_format, prompt=prompt, provider=provider, model=model)
+    _run_response(
+        "text_generation",
+        selected_format,
+        prompt=_resolve_prompt(prompt, prompt_file),
+        provider=provider,
+        model=model,
+    )
 
 
 @app.command()
 def vision(
     image: Path = typer.Option(..., "--image", exists=True, dir_okay=False),
-    prompt: str = typer.Option(..., "--prompt"),
+    prompt: str | None = typer.Option(None, "--prompt"),
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
     output_format: OutputFormat | None = typer.Option(None, "--format"),
+    prompt_file: Path | None = typer.Option(
+        None, "--prompt-file", help="Read a UTF-8 prompt file."
+    ),
 ) -> None:
     """Analyze an image with a vision-capable model."""
     selected_format = _resolve_format(as_json, output_format)
@@ -200,7 +255,7 @@ def vision(
         "vision",
         selected_format,
         images=[image],
-        prompt=prompt,
+        prompt=_resolve_prompt(prompt, prompt_file),
         provider=provider,
         model=model,
     )
@@ -208,29 +263,37 @@ def vision(
 
 @app.command()
 def embed(
-    text: list[str] = typer.Option(..., "--text"),
+    text: list[str] | None = typer.Option(None, "--text"),
     provider: str = typer.Option("ollama", "--provider"),
     model: str = typer.Option(..., "--model"),
     as_json: bool = typer.Option(False, "--json"),
     output_format: OutputFormat | None = typer.Option(None, "--format"),
+    text_file: list[Path] | None = typer.Option(None, "--text-file", help="Read UTF-8 text files."),
 ) -> None:
     """Generate embeddings."""
     selected_format = _resolve_format(as_json, output_format)
-    _run_response("embedding", selected_format, inputs=text, provider=provider, model=model)
+    if bool(text) == bool(text_file):
+        raise typer.BadParameter("Provide either --text or --text-file.")
+    inputs = [_read_text_file(path, "--text-file") for path in text_file] if text_file else text
+    _run_response("embedding", selected_format, inputs=inputs, provider=provider, model=model)
 
 
 @image_app.command("generate")
 def image_generate(
     workflow: str = typer.Option(..., "--workflow"),
     bindings: Path | None = typer.Option(None, "--bindings", exists=True, dir_okay=False),
-    prompt: str = typer.Option(..., "--prompt"),
+    prompt: str | None = typer.Option(None, "--prompt"),
     checkpoint: str | None = typer.Option(None, "--checkpoint"),
     progress: bool = typer.Option(True, "--progress/--no-progress"),
     as_json: bool = typer.Option(False, "--json"),
     output_format: OutputFormat | None = typer.Option(None, "--format"),
+    prompt_file: Path | None = typer.Option(
+        None, "--prompt-file", help="Read a UTF-8 prompt file."
+    ),
 ) -> None:
     """Execute a ComfyUI workflow path or catalog name."""
     selected_format = _resolve_format(as_json, output_format)
+    prompt = _resolve_prompt(prompt, prompt_file)
     try:
         binding_data = json.loads(bindings.read_text(encoding="utf-8")) if bindings else {}
         with CortexMux.from_env() as mux:
@@ -259,9 +322,16 @@ def data_analyze(
     require_verified_calculations: bool = typer.Option(False, "--require-verified-calculations"),
     as_json: bool = typer.Option(False, "--json"),
     output_format: OutputFormat | None = typer.Option(None, "--format"),
+    instruction_file: Path | None = typer.Option(
+        None, "--instruction-file", help="Read a UTF-8 analysis instruction file."
+    ),
 ) -> None:
     """Analyze a local tabular file deterministically."""
     selected_format = _resolve_format(as_json, output_format)
+    if instruction_file is not None:
+        if instruction is not None:
+            raise typer.BadParameter("--instruction and --instruction-file are mutually exclusive.")
+        instruction = _read_text_file(instruction_file, "--instruction-file")
     try:
         with CortexMux.from_env() as mux:
             response = mux.analyze_data(
@@ -375,18 +445,20 @@ def _run_response(task: str, selected_format: OutputFormat, **fields: Any) -> No
         _fail(exc)
 
 
-def _response_output(
-    response: Any, selected_format: OutputFormat, text_field: str = "content"
-) -> None:
-    if selected_format != OutputFormat.TEXT:
+def _response_output(response: CortexResponse, selected_format: OutputFormat) -> None:
+    if selected_format == OutputFormat.MARKDOWN:
+        typer.echo(response.to_markdown(), nl=False)
+    elif selected_format != OutputFormat.TEXT:
         _display(response.model_dump(mode="json"), selected_format)
     else:
-        console.print(getattr(response, text_field, response))
+        console.print(getattr(response, "content", response))
 
 
 def _display(value: Any, selected_format: OutputFormat) -> None:
     if selected_format == OutputFormat.YAML:
         typer.echo(dump_yaml(value), nl=False)
+    elif selected_format == OutputFormat.MARKDOWN:
+        typer.echo(dump_markdown(value), nl=False)
     elif selected_format == OutputFormat.JSON:
         console.print_json(json.dumps(value, default=str))
     else:

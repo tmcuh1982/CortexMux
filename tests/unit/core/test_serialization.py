@@ -1,7 +1,8 @@
-"""Response YAML exports preserve normalized data without unsafe YAML tags."""
+"""Response serialization and format preservation tests."""
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -89,3 +90,18 @@ def test_yaml_dependency_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.model_dump_json()
     with pytest.raises(OptionalDependencyError, match=r"cortexmux\[yaml\]"):
         response.to_yaml()
+
+
+def test_structured_markdown_export_preserves_normalized_data() -> None:
+    response = StructuredResponse(
+        provider="fake",
+        request_id="r",
+        content='{"title":"été"}',
+        parsed={"title": "été", "code": "```\n## still part of the value\n```"},
+    )
+    document = response.to_markdown()
+    assert document.startswith("```json\n") and document.endswith("\n```\n")
+    assert json.loads(document.removeprefix("```json\n").removesuffix("\n```\n")) == (
+        response.model_dump(mode="json")
+    )
+    assert "été" in document
