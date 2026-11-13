@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -173,21 +174,32 @@ async def test_timeout_never_retries(settings, prompt):
     assert any(m.get("method") == "turn/interrupt" for m in calls) == (prompt == "hang")
 
 
-async def test_task_cancellation_and_close(settings):
-    provider = CodexProvider(CodexClient(settings))
-    task = asyncio.create_task(provider.execute(request("hang")))
-    for _ in range(100):
-        await asyncio.sleep(0.01)
-        if (settings.auth_directory / "fake-requests.jsonl").exists() and any(
-            m.get("method") == "turn/start" for m in messages(settings)
-        ):
-            break
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    process = provider.client._process
-    cwd = provider.client.cwd
-    await provider.close()
+async def test_task_cancellation_and_close(settings, monkeypatch):
+    client = CodexClient(settings)
+    rpc = client.request
+    turn_acknowledged = asyncio.Event()
+
+    async def observe_request(method, *args, **kwargs):
+        result = await rpc(method, *args, **kwargs)
+        if method == "turn/start":
+            # Return the acknowledgement to the provider before the waiter can run.
+            turn_acknowledged.set()
+        return result
+
+    monkeypatch.setattr(client, "request", observe_request)
+    async with CodexProvider(client) as provider:
+        task = asyncio.create_task(provider.execute(request("hang")))
+        try:
+            await asyncio.wait_for(turn_acknowledged.wait(), timeout=settings.timeout_seconds)
+            process = client._process
+            cwd = client.cwd
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+        assert task.cancelled()
+
     assert process.returncode is not None
     assert not Path(cwd).exists()
     assert any(m.get("method") == "turn/interrupt" for m in messages(settings))
