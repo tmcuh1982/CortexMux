@@ -128,3 +128,41 @@ Each named provider has its own timeout, defaults, and optional `api_key` or
 `api_key_env`. Environment overrides are `CORTEXMUX_MLX_LM_ENABLED`,
 `CORTEXMUX_MLX_LM_BASE_URL`, `CORTEXMUX_MLX_VLM_ENABLED`, and
 `CORTEXMUX_MLX_VLM_BASE_URL`.
+
+## Compatibility record: Magistral-Small-2509 MLX 8-bit
+
+On 2026-11-13, the server's OpenAPI metadata reported **MLX-VLM 0.7.11**.
+The campaign used non-streaming `POST /v1/chat/completions` and the CortexMux
+evaluation profile `magistral-small-2509-mlx-8bit-r1`. This record describes
+observed behavior with the evaluation adapter. The published adapter capabilities
+are described above.
+
+The canonical checkpoint was
+[`lmstudio-community/Magistral-Small-2509-MLX-8bit`](https://huggingface.co/lmstudio-community/Magistral-Small-2509-MLX-8bit).
+The deployment selected it using an exact server-side snapshot selector. The
+server loaded Magistral on demand even when it was absent from the model list
+after switching back to Qwen. The text control used
+`mlx-community/Qwen3.8-27B-8bit` with standard structured-output validation.
+
+| Probe | Observed result | Output tokens | Elapsed |
+| --- | --- | ---: | ---: |
+| Magistral, same fictional robot at 12 kg and 12,000 g | `stop`, direct JSON validated as `same_fact` | 50 | 2.850 s |
+| Magistral, original synthetic blue PNG without a robot and gallery context | `stop`, direct JSON validated as `rejected` | 29 | 1.681 s |
+| Magistral, explicit `max_tokens: 1` | HTTP 200 with `length`, rejected as truncated before JSON parsing | 1 | 0.322 s |
+| Qwen text control, same mass comparison | JSON validated as `same_fact` via the standard path, with no compatibility profile selected | 148 | 14.907 s |
+| Magistral, mass comparison with an explicit synthetic format example | HTTP 200 with `stop`, leading `[THINK]…[/THINK]` block and JSON validated as `same_fact` | 63 | 3.215 s |
+
+The first format probe returned HTTP 200 and `stop` but failed structured
+validation. The second supplied a synthetic example of the response format and
+produced the leading block. CortexMux removed that prefix from the parsing copy
+and applied the caller's schema to the remaining object. Nine checks confirmed
+that the block, its text, and the private selector were absent from normalized
+content and data, public metadata, string representations, and JSON, YAML and
+Markdown exports. The intact server body remained available through the private
+audit interface.
+
+The text and image probes sent an explicit `max_tokens` and omitted
+`response_format`. The PNG was a synthetic original. These are single-run
+observations, including the elapsed times. The format example reproduced the
+envelope on the real server. The ordinary mass and gallery probes returned
+direct JSON, so callers should expect either form with this combination.
