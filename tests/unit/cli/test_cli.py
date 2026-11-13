@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -353,8 +354,9 @@ def test_invalid_formats_fail_before_facade_use(
         env={"NO_COLOR": "1", "FORCE_COLOR": None, "COLUMNS": "120"},
     )
     assert result.exit_code == 2
-    assert "--format" in result.stderr
-    assert diagnostic in result.stderr
+    stderr = re.sub(r"\x1b\[[0-9;]*m", "", result.stderr)
+    assert "--format" in stderr
+    assert diagnostic in stderr
 
 
 @pytest.mark.parametrize("command", [["providers"], ["chat", "--prompt", "hi", "--model", "model"]])
