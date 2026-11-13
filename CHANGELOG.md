@@ -6,6 +6,21 @@ All notable changes follow Keep a Changelog conventions.
 
 ### Added
 
+- Prepare 1.2.0rc1 with versioned MLX/DeepSeek behavior profiles, exact deployment
+  bindings, explicit offline qualification mode, live attestation gates, portable
+  manifests and rules/fixture hashes. Keep existing structured facade interfaces.
+- Add a shared strict JSON/envelope pipeline, typed public diagnostics, bounded
+  opt-in private evidence, native reasoning controls and offline regression tests.
+- Document initial-request traceability, migration and live requalification in
+  `docs/behavior-review-1.2.0rc1.md` and `docs/behavior-profiles.md`.
+
+### Fixed
+
+- Bound completion and OpenAPI responses; retain partial HTTP evidence and avoid
+  decoding compressed replies twice. Reject unsupported sampling controls,
+  contradictory bindings, failed qualifications and reported budget overruns.
+
+
 - Accept local UTF-8 Markdown files as CLI prompts, embedding inputs, and
   analysis instructions.
 - Add `response.to_markdown()` and CLI `--format markdown` (alias `md`), using

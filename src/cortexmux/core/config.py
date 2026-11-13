@@ -11,6 +11,7 @@ from typing import Any
 from platformdirs import user_config_dir
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from cortexmux.behavior import BehaviorBinding
 from cortexmux.core.exceptions import ConfigurationError
 from cortexmux.core.types import TaskType
 from cortexmux.mcp.schemas import MCPServerConfig
@@ -145,6 +146,8 @@ class DeepSeekConfig(BaseModel):
     api_key: SecretStr | None = Field(default=None, repr=False)
     api_key_env: str = Field(default="DEEPSEEK_API_KEY", min_length=1)
     defaults: DeepSeekDefaults = Field(default_factory=DeepSeekDefaults)
+    server_version: str | None = None
+    behavior_profiles: dict[str, BehaviorBinding] = Field(default_factory=dict, repr=False)
 
 
 class QwenCloudConfig(BaseModel):
@@ -167,6 +170,10 @@ class MLXConfig(BaseModel):
     api_key: SecretStr | None = Field(default=None, repr=False)
     api_key_env: str = Field(default="MLX_API_KEY", min_length=1)
     defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
+
+    server_version: str | None = None
+    check_openapi_version: bool = False
+    behavior_profiles: dict[str, BehaviorBinding] = Field(default_factory=dict, repr=False)
 
 
 class TypeSafeConfig(BaseModel):
