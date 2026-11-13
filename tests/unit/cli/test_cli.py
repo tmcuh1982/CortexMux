@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -333,18 +334,29 @@ def test_configuration_yaml_redaction(
 
 
 @pytest.mark.parametrize(
-    "flags", [["--format", "xml"], ["--json", "--format", "yaml"], ["--json", "--format", "text"]]
+    ("flags", "diagnostic"),
+    [
+        (["--format", "xml"], "xml"),
+        (["--json", "--format", "yaml"], "--json cannot be combined with --format"),
+        (["--json", "--format", "text"], "--json cannot be combined with --format"),
+    ],
 )
 def test_invalid_formats_fail_before_facade_use(
-    monkeypatch: pytest.MonkeyPatch, flags: list[str]
+    monkeypatch: pytest.MonkeyPatch, flags: list[str], diagnostic: str
 ) -> None:
     def unexpected_facade(*args: Any, **kwargs: Any) -> None:
         pytest.fail("Invalid output format must be rejected before invoking a provider")
 
     monkeypatch.setattr(CortexMux, "from_env", unexpected_facade)
-    result = runner.invoke(app, ["chat", "--prompt", "hello", "--model", "model", *flags])
+    result = runner.invoke(
+        app,
+        ["chat", "--prompt", "hello", "--model", "model", *flags],
+        env={"NO_COLOR": "1", "FORCE_COLOR": None, "COLUMNS": "120"},
+    )
     assert result.exit_code == 2
-    assert "--format" in result.output
+    stderr = re.sub(r"\x1b\[[0-9;]*m", "", result.stderr)
+    assert "--format" in stderr
+    assert diagnostic in stderr
 
 
 @pytest.mark.parametrize("command", [["providers"], ["chat", "--prompt", "hi", "--model", "model"]])
