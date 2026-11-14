@@ -11,7 +11,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from cortexmux.core.capabilities import ProviderCapability, TemperatureRange, TemperatureSetting
 from cortexmux.core.config import CortexMuxConfig
@@ -315,6 +315,8 @@ class CortexMux:
                         for model in deepseek_settings.defaults.model_dump().values()
                         if isinstance(model, str)
                     ],
+                    server_version=deepseek_settings.server_version,
+                    behavior_profiles=deepseek_settings.behavior_profiles,
                 )
             )
         if self.config.providers.qwencloud.enabled:
@@ -378,6 +380,9 @@ class CortexMux:
                         if isinstance(model, str)
                     ],
                     name=mlx_name,
+                    server_version=mlx_settings.server_version,
+                    check_openapi_version=mlx_settings.check_openapi_version,
+                    behavior_profiles=mlx_settings.behavior_profiles,
                 )
             )
         if self.config.providers.typesafe.enabled:
@@ -828,7 +833,19 @@ class CortexMux:
             ),
         )
         if response_model:
-            response.parsed = response_model.model_validate(response.parsed)
+            try:
+                response.parsed = response_model.model_validate(response.parsed)
+            except ValidationError:
+                diagnostic = dict((response.raw_metadata or {}).get("behavior", {}))
+                diagnostic["category"] = "schema"
+                error = StructuredOutputValidationError(
+                    "Structured output does not match the response model.",
+                    provider=response.provider,
+                    request_id=response.request_id,
+                    behavior=diagnostic,
+                )
+                error._private_audit = response.private_audit
+                raise error from None
         return response
 
     def structured(

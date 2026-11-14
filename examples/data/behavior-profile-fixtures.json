@@ -1,0 +1,141 @@
+{
+  "is_synthetic": true,
+  "fixtures": {
+    "magistral": [
+      {
+        "accepted": true,
+        "expected_json": "{\"answer\": \"ok\"}",
+        "is_synthetic": true,
+        "raw": "{\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": true,
+        "expected_json": "{\"answer\": \"ok\"}",
+        "is_synthetic": true,
+        "raw": "[THINK]Analyse synthétique.[/THINK]\n{\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": true,
+        "expected_json": "{\"answer\": \"ok\"}",
+        "is_synthetic": true,
+        "raw": "```json\n{\"answer\":\"ok\"}\n```"
+      },
+      {
+        "accepted": true,
+        "expected_json": "{\"answer\": \"ok\"}",
+        "is_synthetic": true,
+        "raw": "[THINK]Analyse synthétique.[/THINK]\n```json\n{\"answer\":\"ok\"}\n```"
+      },
+      {
+        "accepted": true,
+        "expected_json": "{\"answer\": \"[THINK]texte littéral[/THINK]\"}",
+        "is_synthetic": true,
+        "raw": "{\"answer\":\"[THINK]texte littéral[/THINK]\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "[THINK]Analyse non terminée\n{\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "[THINK]A[THINK]B[/THINK]\n{\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "Voici la réponse : {\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"answer\":\"ok\"}\n{\"answer\":\"autre\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"answer\":\"ok\",\"answer\":\"autre\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"value\":NaN}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"value\":1e999}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "[{\"answer\":\"ok\"}]"
+      }
+    ],
+    "qwen": [
+      {
+        "accepted": true,
+        "expected_json": "{\"answer\": \"ok\"}",
+        "is_synthetic": true,
+        "raw": "{\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "[THINK]Analyse non terminée\n{\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "[THINK]A[THINK]B[/THINK]\n{\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "Voici la réponse : {\"answer\":\"ok\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"answer\":\"ok\"}\n{\"answer\":\"autre\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"answer\":\"ok\",\"answer\":\"autre\"}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"value\":NaN}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "{\"value\":1e999}"
+      },
+      {
+        "accepted": false,
+        "expected_json": null,
+        "is_synthetic": true,
+        "raw": "[{\"answer\":\"ok\"}]"
+      }
+    ]
+  }
+}

@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from cortexmux.core.bounded_http import read_bounded
 from cortexmux.core.exceptions import (
     ConfigurationError,
     ModelNotFoundError,
@@ -56,18 +57,26 @@ class DeepSeekClient:
         self._timeout = timeout
 
     async def complete(
-        self, payload: dict[str, Any], *, request_id: str, timeout: float | None = None
+        self,
+        payload: dict[str, Any],
+        *,
+        request_id: str,
+        timeout: float | None = None,
+        private_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return one completed JSON response without exposing error bodies."""
         context = {"provider": "deepseek", "request_id": request_id}
         try:
-            response = await self._client.post(
+            async with self._client.stream(
+                "POST",
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 json=payload,
                 timeout=self._timeout if timeout is None else timeout,
                 follow_redirects=False,
-            )
+            ) as streamed:
+                body = await read_bounded(streamed, context=context, audit=private_audit)
+                response = httpx.Response(streamed.status_code, content=body)
         except httpx.TimeoutException:
             raise ProviderTimeoutError("DeepSeek request timed out.", **context) from None
         except httpx.RequestError:
@@ -82,7 +91,7 @@ class DeepSeekClient:
             )
         try:
             data = response.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             raise ProviderResponseError("DeepSeek returned malformed JSON.", **context) from None
         if not isinstance(data, dict):
             raise ProviderResponseError("DeepSeek returned an unexpected JSON value.", **context)

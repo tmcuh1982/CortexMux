@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from cortexmux.behavior import BehaviorBinding
+from cortexmux.core.behavior_runtime import execute_behavior, validate_bindings
 from cortexmux.core.capabilities import ProviderCapability
 from cortexmux.core.exceptions import (
     InvalidRequestError,
@@ -51,10 +53,21 @@ class MLXProvider(BaseProvider):
     name = "mlx"
 
     def __init__(
-        self, client: MLXClient, *, models: list[str] | None = None, name: str = "mlx"
+        self,
+        client: MLXClient,
+        *,
+        models: list[str] | None = None,
+        name: str = "mlx",
+        server_version: str | None = None,
+        check_openapi_version: bool = False,
+        behavior_profiles: dict[str, BehaviorBinding] | None = None,
     ) -> None:
         self.name = name
         self.client = client
+        self._server_version = server_version
+        self._behaviors = dict(behavior_profiles or {})
+        validate_bindings(self._behaviors, self.name)
+        self._check_openapi_version = check_openapi_version
         self._models = tuple(dict.fromkeys(models or []))
 
     async def healthcheck(self) -> HealthStatus:
@@ -75,11 +88,13 @@ class MLXProvider(BaseProvider):
 
     async def get_capabilities(self, model: str | None = None) -> list[ProviderCapability]:
         """Describe the implemented non-streaming text tasks."""
+        binding = self._behaviors.get(model or "")
+        tasks = frozenset(TaskType(t) for t in binding.profile.rules.tasks) if binding else _TASKS
         return [
             ProviderCapability(
                 provider=self.name,
                 model=model,
-                task_types=_TASKS,
+                task_types=tasks,
                 structured_output=True,
                 locally_hosted=True,
             )
@@ -91,6 +106,22 @@ class MLXProvider(BaseProvider):
 
     async def execute(self, request: CortexRequest) -> CortexResponse:
         """Validate and normalize a completed text or JSON answer."""
+        binding = self._behaviors.get(request.model or "")
+        if binding is not None:
+            return await execute_behavior(
+                request,
+                binding,
+                provider=self.name,
+                server_version=self._server_version,
+                client=self.client,
+                observe_version=(
+                    lambda: self.client.server_version(
+                        request_id=request.request_id, timeout=request.timeout
+                    )
+                )
+                if self._check_openapi_version
+                else None,
+            )
         context = {"provider": self.name, "request_id": request.request_id}
         if not isinstance(request, (TextGenerationRequest, ChatRequest, StructuredOutputRequest)):
             raise UnsupportedTaskError("MLX does not implement this task.", **context)

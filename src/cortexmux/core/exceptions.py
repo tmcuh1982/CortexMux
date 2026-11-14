@@ -11,6 +11,13 @@ class CortexMuxError(Exception):
         self.message = message
         self.context = {key: value for key, value in context.items() if value is not None}
 
+    _private_audit: dict[str, object] | None = None
+
+    @property
+    def private_audit(self) -> dict[str, object] | None:
+        """Return sensitive provider diagnostics for explicit application use."""
+        return self._private_audit
+
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible diagnostic representation."""
         return {"error": type(self).__name__, "message": self.message, "context": self.context}

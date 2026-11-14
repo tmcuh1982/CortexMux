@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from cortexmux.core.serialization import dump_markdown, dump_yaml
 from cortexmux.core.types import TaskType
@@ -23,6 +23,13 @@ class CortexResponse(BaseModel):
     routing: RoutingMetadata | None = None
     usage: UsageMetadata | None = None
     raw_metadata: dict[str, Any] | None = None
+
+    _private_audit: dict[str, Any] | None = PrivateAttr(default=None)
+
+    @property
+    def private_audit(self) -> dict[str, Any] | None:
+        """Return bounded sensitive diagnostics only for explicit application use."""
+        return self._private_audit
 
     def to_yaml(self) -> str:
         """Export the complete response as YAML; requires ``cortexmux[yaml]``.
