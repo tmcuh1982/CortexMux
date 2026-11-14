@@ -17,8 +17,10 @@ MLX vision is not introduced by this PR or inferred from a server/model name.
 Bundled `magistral` and `qwen` manifests target the exact supplied model IDs,
 MLX-VLM 0.7.11 and 8-bit quantization. They are **offline candidates**, not live
 certifications. Revision 2 replaces the initial local candidate's revision 1 after
-rules/fixtures changed during review. Model revisions and output-cap scope are
-unknown (`null` / `unknown`); no version is invented.
+rules/fixtures changed during review. Model revisions and output-cap scope remain
+`null` / `unknown` in these unchanged manifests. The [live investigation](behavior-live-1.2.0rc1.md)
+now documents total-generation cap scope for the tested MLX-VLM path and partial
+Qwen reasoning measurements; it does not promote the manifests to live certifications.
 
 Bindings require adequate live evidence by default. A live attestation must name
 the exact deployment identity and current rules/fixture hash, pass, and cover
@@ -205,6 +207,15 @@ contracts, not model-profile rules. No UniversRobot route changes accompany this
    reasoning enabled/disabled and the 128-token budget where applicable. Missing
    completion/reasoning counters skip the relevant measurement and do not attest it.
    Determine output-cap scope separately; accepted HTTP parameters alone are not proof.
+   For MLX-VLM 0.7.11, `max_tokens` includes reasoning, control tokens and the final
+   answer. `thinking_budget` triggers a transition after the counter exceeds the
+   budget; it is not an exact reasoning-segment ceiling. Define whether a measured
+   segment includes the forced newline, closing delimiter and terminal token.
+   The observed Qwen logprobs counts must not be copied into a purported native
+   `reasoning_tokens` field or treated as a complete public-contract attestation.
+   The current runtime's reported-overrun check is not a server instrumentation
+   mechanism. Qualify the metric semantics before relying on a reported count.
+   Magistral's absent reasoning block does not qualify its budget.
 5. Review and append a `Qualification(kind="live", passed=True, checks=(...),
    identity=new_identity, rules_fingerprint=..., evidence="reviewed-evidence-id")`.
    Rebuild using `BehaviorProfile.model_validate(...)`, export, and bind the new

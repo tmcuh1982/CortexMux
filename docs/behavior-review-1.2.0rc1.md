@@ -3,8 +3,10 @@
 Review scope: local candidate built over HEAD
 `a407fb86a5648c62455cffad15b0e067814d8527`. PR base is the verified remote
 `codex/release-v1.1.0` at that commit; remote `main` still points to release 0.3.0.
-The review is isolated from the original dirty checkout. No UniversRobot changes,
-publication, tags, route activation or live service calls are included.
+The review is isolated from the original dirty checkout. Updated 14 November 2026
+after live trials and the separately authorized GitHub prerelease publication.
+No UniversRobot changes or route/profile activation were performed. The published
+tag remains on the original candidate; this documentation follow-up is in PR #5.
 
 ## HEAD audit and reconciliation
 
@@ -51,7 +53,7 @@ coverage proves library behavior, not server/model enforcement.
 | 6–8: requalification, no fallback, generic compatibility | `test_requalification_reuses_rules_without_implicit_inheritance`, existing MLX/DeepSeek provider tests, preflight no-I/O tests. No router/provider fallback added. |
 | 9–14: explicit/routed parity, two tasks, budgets, hashes, sync/async, mandatory precedence | `test_public_explicit_and_routed_calls_keep_task_budgets`, `test_sync_public_parity`, public example, preflight controls. |
 | 15–20: wire contract, omitted format, reasoning, rejection, no effort equivalence, unknown counters | `test_qwen_native_controls_without_response_format`, `test_controls_and_diagnostics_share_the_same_pipeline`, `test_preflight_never_sends_unsupported_options`. |
-| 21: actual ceiling and truncation | **Not executed live.** Opt-in live cap/truncation probes provided; unknown counters remain unqualified. |
+| 21: actual ceiling and truncation | Executed for Magistral and Qwen: requested ceilings 1/64/512 reached and truncations rejected through the public facade. Additional Qwen logprobs confirm a 64-token reasoning-only truncation. See [live results](behavior-live-1.2.0rc1.md); missing counters remain unknown. |
 | 22–28: Magistral examples, literals, duplicates/nonfinite JSON, syntax/schema, length, no semantics or array selection | Embedded expected-value fixtures; `test_portable_profiles_and_fixtures`, failure diagnostics, relation/literal preservation, common provider failure/schema tests. |
 | 29–33: diagnostics, private access, safe messages, limits, no retry | Common typed diagnostics, private-audit tests, gzip/partial/size tests, one-call assertions, response-model validation audit. |
 | 34–37: round-trip, portable exports, reusable rules, non-regression | Profile round-trip/fingerprint tests, requalification tests and full offline repository suite against the focused branch. |
@@ -60,18 +62,39 @@ coverage proves library behavior, not server/model enforcement.
 
 ## Remaining external qualification and release gates
 
-No approved `CORTEXMUX_BEHAVIOR_LIVE_CONFIG` or new live evidence was supplied.
-MLX-VLM 0.7.11 Magistral/Qwen reasoning-budget enforcement, output-cap scope,
-actual model revisions, and DeepSeek live deployment identity remain to qualify.
-The runtime now refuses to treat those missing attestations as live qualification.
-Attestations are reviewer/application assertions referencing private evidence,
-not signatures or automatically verified external evidence.
+[Live results and limits](behavior-live-1.2.0rc1.md) record 14 public-facade calls
+and seven separate protocol diagnostics on MLX-VLM 0.7.11. Output-cap scope and
+Qwen reasoning segments were investigated; Magistral reasoning-budget enforcement,
+actual weight revisions/quantization, DeepSeek live identity and TracedCortexMux
+integration remain unqualified. No complete live attestation was added. Bundled
+manifests remain offline candidates and their hashes are unchanged.
 
-The live probes are opt-in and synthetic. Missing counters explicitly prevent the
-relevant measurement from qualifying. Model/server changes require exact new
-identity plus reviewed evidence; unchanged rules keep their hash. DSPy remains
-outside transport, validation, permissions and activation. UniversRobot adaptation
-and TracedCortexMux live integration require a separately requested release adoption.
+The [GitHub prerelease](https://github.com/tmcuh1982/CortexMux/releases/tag/v1.2.0rc1)
+was published separately on 14 November at candidate commit
+`d6d8d22551cb84bfb30544ac954ca360e96cd0e2`. PR #5 remains open for review.
+Publication does not activate a profile or qualify UniversRobot integration.
+Attestations remain reviewer/application assertions referencing private evidence,
+not signatures or automatically verified external evidence. DSPy remains outside
+transport, validation, permissions and activation. UniversRobot adoption requires
+a separate request.
+
+## Nine requested deliverables
+
+| Deliverable | Evidence and status |
+| --- | --- |
+| 1. HEAD audit and reconciliation | This document, HEAD audit above. Complete. |
+| 2. Compatible minimal implementation | Existing facade/clients, shared behavior pipeline and review corrections above. Implemented; live limits below remain. |
+| 3. Exportable profiles and common normalization | Revision-2 manifests and [profile guide](behavior-profiles.md). Implemented; manifests are offline candidates. |
+| 4. Executed tests, results and remaining limits | [Release validation](release-1.2.0rc1.md) and [live report](behavior-live-1.2.0rc1.md). Offline checks pass; live qualification is partial. |
+| 5. Public integration example usable by TracedCortexMux | [Two-task example](../examples/behavior_profiles.py), success and privately audited error without monkeypatches. Provided; real TracedCortexMux integration not tested. |
+| 6. Migration guide for MLX/DeepSeek shims | [Portability and migration](behavior-profiles.md#portability-and-migration), native DeepSeek controls. Provided; no consumer migration performed. |
+| 7. Requalification procedure | [Requalification](behavior-profiles.md#requalification), exact new identity, unchanged-rule reuse and reviewed evidence. Documented and tested offline; no complete live attestation issued. |
+| 8. Release note, version and artifact hashes | [Release record](release-1.2.0rc1.md). GitHub prerelease published; immutable original artifacts identified. |
+| 9. Explicit performed/unperformed live trials | [Live report](behavior-live-1.2.0rc1.md), 14 + 7 calls with measurement conventions and untested areas. Recorded. |
+
+All nine deliverables are present; this does not mean every deployment capability
+has been certified. This follow-up synchronizes repository documentation with the
+PR reports without replacing the published tag or distributions.
 
 The initial local 549-test run included uncommitted legacy/vision/data test files
 not present in HEAD. The focused PR does not delete any tracked tests; its count
