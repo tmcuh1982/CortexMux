@@ -4,6 +4,19 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [1.2.0rc2] - 2026-11-14
+
+### Changed
+
+- Synchronize the nine requested deliverables with the 14 public-facade live
+  probes and seven logprobs diagnostics on MLX-VLM 0.7.11.
+- Document Qwen reasoning-token measurement conventions, total output-cap scope,
+  and remaining Magistral, DeepSeek, identity and TracedCortexMux qualification gaps.
+- Package the updated review, migration/requalification guide and release records.
+  Runtime behavior and profile manifests are unchanged from 1.2.0rc1.
+
+## [1.2.0rc1] - 2026-11-14
+
 ### Added
 
 - Prepare 1.2.0rc1 with versioned MLX/DeepSeek behavior profiles, exact deployment
