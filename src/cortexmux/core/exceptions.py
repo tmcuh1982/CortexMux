@@ -11,6 +11,13 @@ class CortexMuxError(Exception):
         self.message = message
         self.context = {key: value for key, value in context.items() if value is not None}
 
+    _private_audit: dict[str, object] | None = None
+
+    @property
+    def private_audit(self) -> dict[str, object] | None:
+        """Return sensitive provider diagnostics for explicit application use."""
+        return self._private_audit
+
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible diagnostic representation."""
         return {"error": type(self).__name__, "message": self.message, "context": self.context}
@@ -40,6 +47,10 @@ class ProviderResponseError(CortexMuxError):
     """A provider returned an invalid or failed response."""
 
 
+class MCPProtocolError(CortexMuxError):
+    """A local MCP server violated the bounded JSON-RPC protocol contract."""
+
+
 class ModelNotFoundError(CortexMuxError):
     """A requested model is unavailable."""
 
@@ -58,6 +69,10 @@ class InvalidRequestError(CortexMuxError):
 
 class StructuredOutputValidationError(CortexMuxError):
     """Structured model output failed validation."""
+
+
+class StructuredStreamInterruptedError(ProviderResponseError):
+    """A structured provider stream ended before its completion marker."""
 
 
 class WorkflowValidationError(CortexMuxError):
@@ -97,6 +112,10 @@ class OptionalDependencyError(CortexMuxError):
 
 class SecurityError(CortexMuxError):
     """A security policy rejected an operation."""
+
+
+class MCPToolNotAllowedError(SecurityError):
+    """An MCP tool or argument exceeded the CapitalForge read-only allowlist."""
 
 
 class RemoteHostNotAllowedError(SecurityError):

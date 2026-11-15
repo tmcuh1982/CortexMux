@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
+from cortexmux.core.serialization import dump_markdown, dump_yaml
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.calculations import CalculationVerification
 from cortexmux.schemas.common import ImageArtifact, RoutingMetadata, UsageMetadata
+from cortexmux.schemas.decisions import DecisionAnswer
 
 
 class CortexResponse(BaseModel):
@@ -22,12 +24,35 @@ class CortexResponse(BaseModel):
     usage: UsageMetadata | None = None
     raw_metadata: dict[str, Any] | None = None
 
+    _private_audit: dict[str, Any] | None = PrivateAttr(default=None)
+
+    @property
+    def private_audit(self) -> dict[str, Any] | None:
+        """Return bounded sensitive diagnostics only for explicit application use."""
+        return self._private_audit
+
+    def to_yaml(self) -> str:
+        """Export the complete response as YAML; requires ``cortexmux[yaml]``.
+
+        Uses the same JSON-compatible values as ``model_dump(mode="json")``,
+        including normalized metadata and validated structured data.
+        """
+        return dump_yaml(self.model_dump(mode="json"))
+
+    def to_markdown(self) -> str:
+        """Export the normalized response as a Markdown document."""
+        return dump_markdown(self.model_dump(mode="json"))
+
 
 class TextResponse(CortexResponse):
     """Normalized generated text."""
 
     task: Literal[TaskType.TEXT_GENERATION] = TaskType.TEXT_GENERATION
     content: str
+
+    def to_markdown(self) -> str:
+        """Return the generated text as Markdown without rewriting it."""
+        return self.content
 
 
 class ChatResponse(CortexResponse):
@@ -36,6 +61,10 @@ class ChatResponse(CortexResponse):
     task: Literal[TaskType.CHAT] = TaskType.CHAT
     content: str
     role: str = "assistant"
+
+    def to_markdown(self) -> str:
+        """Return the assistant's text as Markdown without rewriting it."""
+        return self.content
 
 
 class StructuredResponse(CortexResponse):
@@ -46,11 +75,22 @@ class StructuredResponse(CortexResponse):
     parsed: Any
 
 
+class DecisionResponse(CortexResponse):
+    """Typed probabilities for every question in a decision request."""
+
+    task: Literal[TaskType.DECISION] = TaskType.DECISION
+    answers: dict[str, DecisionAnswer] = Field(min_length=1)
+
+
 class VisionResponse(CortexResponse):
     """Normalized image analysis output."""
 
     task: Literal[TaskType.VISION] = TaskType.VISION
     content: str
+
+    def to_markdown(self) -> str:
+        """Return the vision analysis as Markdown without rewriting it."""
+        return self.content
 
 
 class EmbeddingResponse(CortexResponse):
@@ -85,6 +125,10 @@ class DataAnalysisResponse(CortexResponse):
     math_verification_passed: bool | None = None
     disclosure: dict[str, Any] = Field(default_factory=dict)
 
+    def to_markdown(self) -> str:
+        """Return the analysis report with the accepted interpretation, if any."""
+        return self.report_markdown
+
 
 class StreamChunk(BaseModel):
     """An incremental provider stream item."""
@@ -96,3 +140,30 @@ class StreamChunk(BaseModel):
     done: bool = False
     usage: UsageMetadata | None = None
     raw_metadata: dict[str, Any] | None = None
+
+
+class StructuredStreamChunk(BaseModel):
+    """An unvalidated structured-output text fragment for draft display only."""
+
+    event: Literal["chunk"] = "chunk"
+    request_id: str
+    provider: str
+    model: str | None = None
+    content: str
+
+
+class StructuredStreamCompleted(BaseModel):
+    """A complete structured output emitted only after final validation."""
+
+    event: Literal["completed"] = "completed"
+    request_id: str
+    provider: str
+    model: str | None = None
+    content: str
+    parsed: Any
+    raw_metadata: dict[str, Any] | None = None
+    usage: UsageMetadata | None = None
+
+
+StructuredStreamEvent = StructuredStreamChunk | StructuredStreamCompleted
+StreamEvent = StreamChunk | StructuredStreamEvent

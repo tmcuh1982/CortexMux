@@ -78,6 +78,8 @@ class WebPageFetcher:
                         body,
                         max_tables=self.config.max_tables,
                         max_table_rows=self.config.max_table_rows,
+                        max_table_columns=self.config.max_table_columns,
+                        max_table_cells=self.config.max_table_cells,
                     )
                 else:
                     title = None

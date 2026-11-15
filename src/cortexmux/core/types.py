@@ -13,6 +13,7 @@ class TaskType(StrEnum):
     EMBEDDING = "embedding"
     IMAGE_GENERATION = "image_generation"
     DATA_ANALYSIS = "data_analysis"
+    DECISION = "decision"
 
 
 class MessageRole(StrEnum):

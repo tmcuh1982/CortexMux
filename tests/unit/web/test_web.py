@@ -12,6 +12,8 @@ from cortexmux.core.exceptions import (
     WebFetchError,
 )
 from cortexmux.web import WebPageFetcher
+from cortexmux.web import parser as web_parser
+from cortexmux.web.parser import extract_html
 
 PUBLIC_URL = "https://93.184.216.34"
 
@@ -128,5 +130,87 @@ async def test_response_size_and_content_type_are_enforced() -> None:
     with pytest.raises(WebFetchError, match="size limit"):
         await fetcher.fetch(PUBLIC_URL)
     with pytest.raises(WebFetchError, match="content type"):
+        await fetcher.fetch(PUBLIC_URL)
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("html", "limits", "message"),
+    [
+        (
+            "<table><tr><th>A</th><th>B</th><th>C</th></tr></table>",
+            {"max_table_columns": 2, "max_table_cells": 10},
+            "column limit",
+        ),
+        (
+            "<table><tr><th>A</th></tr><tr><td>x</td><td>y</td><td>z</td></tr></table>",
+            {"max_table_columns": 3, "max_table_cells": 5},
+            "cell limit",
+        ),
+        (
+            "<table><tr><td>x</td><td>y</td></tr></table>" * 2,
+            {"max_table_columns": 2, "max_table_cells": 5},
+            "cell limit",
+        ),
+        (
+            "<table><tr>" + "<th>H</th>" * 100 + "</tr>" + "<tr><td>x</td></tr>" * 50 + "</table>",
+            {"max_table_columns": 100, "max_table_cells": 150},
+            "cell limit",
+        ),
+    ],
+)
+def test_html_table_shape_limits(html: str, limits: dict[str, int], message: str) -> None:
+    with pytest.raises(WebFetchError, match=message):
+        extract_html(html, max_tables=2, max_table_rows=50, **limits)
+
+
+def test_html_table_limits_preserve_ragged_rows_and_disabled_tables() -> None:
+    html = (
+        "<table><tr><th>A</th><th>A</th></tr>"
+        "<tr><td>x</td></tr><tr><td>y</td><td>z</td></tr></table>"
+    )
+    _title, _text, tables = extract_html(
+        html, max_tables=1, max_table_rows=2, max_table_columns=2, max_table_cells=6
+    )
+    assert tables[0].headers == ["A", "A_2"]
+    assert tables[0].rows == [["x", ""], ["y", "z"]]
+    assert (
+        extract_html(html, max_tables=0, max_table_rows=0, max_table_columns=1, max_table_cells=1)[
+            2
+        ]
+        == []
+    )
+
+
+def test_sparse_table_is_rejected_before_matrix_allocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    html = "<table><tr>" + "<th>H</th>" * 100 + "</tr>" + "<tr><td>x</td></tr>" * 50 + "</table>"
+
+    def should_not_build(*args: object, **kwargs: object) -> None:
+        raise AssertionError("The oversized table was allocated before the limit check.")
+
+    monkeypatch.setattr(web_parser, "_build_table", should_not_build)
+    with pytest.raises(WebFetchError, match="cell limit"):
+        extract_html(
+            html,
+            max_tables=1,
+            max_table_rows=50,
+            max_table_columns=100,
+            max_table_cells=150,
+        )
+
+
+@pytest.mark.asyncio
+async def test_fetch_enforces_table_column_limit() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<table><tr><td>1</td><td>2</td><td>3</td></tr></table>",
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    fetcher = WebPageFetcher(WebConfig(enabled=True, max_table_columns=2), client=client)
+    with pytest.raises(WebFetchError, match="column limit"):
         await fetcher.fetch(PUBLIC_URL)
     await client.aclose()

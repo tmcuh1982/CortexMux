@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from typer.testing import CliRunner
 
-from cortexmux import CortexMux
+from cortexmux import CortexMux, __version__
 from cortexmux.cli.main import app
 from cortexmux.core.types import TaskType
-from cortexmux.schemas.common import ImageArtifact, ModelInfo
+from cortexmux.providers.comfyui.catalog import WorkflowCatalogItem
+from cortexmux.schemas.common import HealthStatus, ImageArtifact, ModelInfo
 from cortexmux.schemas.responses import (
+    ChatResponse,
     DataAnalysisResponse,
     ImageGenerationResponse,
     TextResponse,
 )
+from cortexmux.selection import MachineProfile, QualificationManifest, QualificationSuite
 
 runner = CliRunner()
 
@@ -24,7 +30,7 @@ runner = CliRunner()
 def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "0.3.0" in result.stdout
+    assert result.stdout.strip() == __version__
 
 
 def test_doctor_without_network_providers(tmp_path: Path) -> None:
@@ -84,6 +90,16 @@ class FakeMux:
     def list_models(self, provider: str) -> list[ModelInfo]:
         return [ModelInfo(name="model", provider=provider)]
 
+    def list_workflows(self) -> list[WorkflowCatalogItem]:
+        return [WorkflowCatalogItem(name="demo", manifest_path=Path("demo.cortexmux.json"))]
+
+    def qualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        return QualificationManifest(
+            machine=MachineProfile(system="test", release="1", architecture="arm64"),
+            candidates=[],
+            recommendations=[],
+        )
+
     def run(self, task: str, **fields: Any) -> TextResponse:
         return TextResponse(
             task=TaskType.TEXT_GENERATION,
@@ -91,6 +107,14 @@ class FakeMux:
             model=str(fields.get("model", "model")),
             request_id="r",
             content=f"{task} result",
+        )
+
+    def chat(self, prompt: str, **fields: Any) -> ChatResponse:
+        return ChatResponse(
+            provider=str(fields.get("provider", "fake")),
+            model=str(fields.get("model", "model")),
+            request_id="r",
+            content="chat result",
         )
 
     def generate_image(self, prompt: str, **fields: Any) -> ImageGenerationResponse:
@@ -132,6 +156,37 @@ def test_provider_models_and_generation_commands(fake_mux: None, tmp_path: Path)
     assert runner.invoke(app, ["providers", "--json"]).exit_code == 0
     models = runner.invoke(app, ["models", "list", "--provider", "fake", "--json"])
     assert models.exit_code == 0 and "model" in models.stdout
+    suite = tmp_path / "suite.json"
+    suite.write_text(
+        json.dumps(
+            {
+                "candidates": [{"id": "one", "provider": "fake", "model": "model"}],
+                "cases": [
+                    {
+                        "id": "case",
+                        "task": "chat",
+                        "prompt": "x",
+                        "validator": "exact_text",
+                        "expected_text": "OK",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.json"
+    qualified = runner.invoke(
+        app,
+        [
+            "models",
+            "qualify",
+            "--suite",
+            str(suite),
+            "--output",
+            str(manifest),
+        ],
+    )
+    assert qualified.exit_code == 0 and manifest.is_file()
     for command in ("chat", "generate"):
         result = runner.invoke(
             app,
@@ -222,3 +277,279 @@ def test_workflow_catalog_list_command(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert '"name": "demo"' in result.stdout
     assert '"binding_fields": [' in result.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["providers"],
+        ["models", "list", "--provider", "fake"],
+        ["chat", "--prompt", "hello", "--model", "model"],
+        ["generate", "--prompt", "hello", "--model", "model"],
+        ["embed", "--text", "one", "--model", "model"],
+        ["vision", "--image", "input.png", "--prompt", "look", "--model", "model"],
+        ["image", "generate", "--workflow", "demo", "--prompt", "hello"],
+        ["data", "analyze", "input.csv"],
+        ["workflows", "list"],
+        ["workflows", "show", "demo"],
+    ],
+)
+def test_cli_output_formats(fake_mux: None, tmp_path: Path, command: list[str]) -> None:
+    yaml = pytest.importorskip("yaml")
+    for filename in ("input.png", "input.csv"):
+        (tmp_path / filename).write_text("a\n1\n", encoding="utf-8")
+    args = [str(tmp_path / arg) if arg.startswith("input.") else arg for arg in command]
+    legacy = runner.invoke(app, [*args, "--json"])
+    assert legacy.exit_code == 0, legacy.output
+    expected = json.loads(legacy.stdout)
+    for flags in (["--format", "json"], ["--json", "--format", "json"], ["--format", "yaml"]):
+        result = runner.invoke(app, [*args, *flags])
+        assert result.exit_code == 0, result.output
+        actual = yaml.safe_load(result.stdout) if flags[-1] == "yaml" else json.loads(result.stdout)
+        assert actual == expected
+    default = runner.invoke(app, args)
+    text = runner.invoke(app, [*args, "--format", "text"])
+    assert default.exit_code == text.exit_code == 0
+    assert default.stdout == text.stdout
+
+
+@pytest.mark.parametrize("command", [["doctor"], ["config", "show"]])
+def test_configuration_yaml_redaction(
+    tmp_path: Path, command: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    yaml = pytest.importorskip("yaml")
+    health = HealthStatus(provider="data", available=True, message="Available")
+    monkeypatch.setattr(CortexMux, "health", lambda self: [health])
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[providers.ollama]\nenabled=false\nheaders={Authorization="PRIVATE_SECRET"}\n'
+        "[providers.comfyui]\nenabled=false\n",
+        encoding="utf-8",
+    )
+    env = {"CORTEXMUX_CONFIG": str(config)}
+    legacy = runner.invoke(app, [*command, "--json"], env=env)
+    result = runner.invoke(app, [*command, "--format", "yaml"], env=env)
+    assert legacy.exit_code == result.exit_code == 0
+    assert yaml.safe_load(result.stdout) == json.loads(legacy.stdout)
+    assert "PRIVATE_SECRET" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("flags", "diagnostic"),
+    [
+        (["--format", "xml"], "xml"),
+        (["--json", "--format", "yaml"], "--json can only be combined with --format json"),
+        (["--json", "--format", "text"], "--json can only be combined with --format json"),
+        (["--json", "--format", "md"], "--json can only be combined with --format json"),
+    ],
+)
+def test_invalid_formats_fail_before_facade_use(
+    monkeypatch: pytest.MonkeyPatch, flags: list[str], diagnostic: str
+) -> None:
+    def unexpected_facade(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Invalid output format must be rejected before invoking a provider")
+
+    monkeypatch.setattr(CortexMux, "from_env", unexpected_facade)
+    result = runner.invoke(
+        app,
+        ["chat", "--prompt", "hello", "--model", "model", *flags],
+        env={"NO_COLOR": "1", "FORCE_COLOR": None, "COLUMNS": "120"},
+    )
+    assert result.exit_code == 2
+    stderr = re.sub(r"\x1b\[[0-9;]*m", "", result.stderr)
+    assert "--format" in stderr
+    assert diagnostic in stderr
+
+
+@pytest.mark.parametrize("command", [["providers"], ["chat", "--prompt", "hi", "--model", "model"]])
+def test_missing_yaml_dependency_has_clean_error(
+    fake_mux: None, monkeypatch: pytest.MonkeyPatch, command: list[str]
+) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    result = runner.invoke(app, [*command, "--format", "yaml"])
+    assert result.exit_code == 4
+    assert result.stdout == ""
+    assert "cortexmux[yaml]" in result.stderr
+    assert runner.invoke(app, [*command, "--json"]).exit_code == 0
+
+
+def test_image_yaml_suppresses_progress(fake_mux: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("yaml")
+    original = FakeMux.generate_image
+
+    def generate(self: FakeMux, prompt: str, **fields: Any) -> ImageGenerationResponse:
+        assert fields["on_progress"] is None
+        return original(self, prompt, **fields)
+
+    monkeypatch.setattr(FakeMux, "generate_image", generate)
+    result = runner.invoke(
+        app, ["image", "generate", "--workflow", "demo", "--prompt", "hello", "--format", "yaml"]
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_yaml_stdout_preserves_literal_content(
+    fake_mux: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    yaml = pytest.importorskip("yaml")
+    content = "[red]été[/red] " + "long text " * 50 + "\nsecond line: true\n"
+    response = ChatResponse(provider="fake", request_id="r", content=content)
+    monkeypatch.setattr(FakeMux, "chat", lambda *args, **kwargs: response)
+    result = runner.invoke(
+        app,
+        ["chat", "--prompt", "hello", "--model", "model", "--format", "yaml"],
+        color=True,
+    )
+    assert result.exit_code == 0
+    assert yaml.safe_load(result.stdout) == response.model_dump(mode="json")
+    assert "\x1b[" not in result.stdout
+    assert "été" in result.stdout
+
+
+def test_qualification_yaml_summary_preserves_json_manifest(fake_mux: None, tmp_path: Path) -> None:
+    yaml = pytest.importorskip("yaml")
+    suite = tmp_path / "suite.json"
+    suite.write_text(
+        json.dumps(
+            {
+                "candidates": [{"id": "one", "provider": "fake", "model": "model"}],
+                "cases": [
+                    {
+                        "id": "case",
+                        "task": "chat",
+                        "prompt": "x",
+                        "validator": "exact_text",
+                        "expected_text": "OK",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.json"
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "qualify",
+            "--suite",
+            str(suite),
+            "--output",
+            str(manifest),
+            "--format",
+            "yaml",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(result.stdout) == {
+        "output": str(manifest.resolve()),
+        "recommendations": [],
+    }
+    assert json.loads(manifest.read_text(encoding="utf-8"))["recommendations"] == []
+
+
+@pytest.mark.parametrize(
+    ("command", "method"),
+    [
+        (["chat", "--model", "model"], "chat"),
+        (["generate", "--model", "model"], "run"),
+        (["vision", "--model", "model"], "run"),
+        (["image", "generate", "--workflow", "demo"], "generate_image"),
+    ],
+)
+def test_cli_markdown_prompt_files(
+    fake_mux: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: list[str], method: str
+) -> None:
+    prompt = "# Analyse\r\n\r\n- Vérifie `prix`\r\n"
+    path = tmp_path / "consigne.md"
+    path.write_bytes(prompt.encode("utf-8-sig"))
+    if command[0] == "vision":
+        image = tmp_path / "input.png"
+        image.write_bytes(b"image")
+        command = [*command, "--image", str(image)]
+    spy = Mock(wraps=getattr(FakeMux(), method))
+    monkeypatch.setattr(FakeMux, method, spy)
+    result = runner.invoke(app, [*command, "--prompt-file", str(path), "--format", "markdown"])
+    assert result.exit_code == 0, result.output
+    args, kwargs = spy.call_args
+    if method == "generate_image":
+        assert args[0] == prompt
+        assert kwargs["on_progress"] is None
+        assert json.loads(result.stdout.split("\n", 1)[1].removesuffix("```\n"))["images"]
+    else:
+        assert kwargs["prompt"] == prompt
+
+
+def test_chat_markdown_is_written_verbatim(fake_mux: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    document = "# Été\n\n**Texte** et `[red]literal[/red]`\n\n```python\nprint(1)\n```"
+    response = ChatResponse(provider="fake", request_id="r", content=document)
+    monkeypatch.setattr(FakeMux, "chat", Mock(return_value=response))
+    result = runner.invoke(app, ["chat", "--prompt", "hi", "--model", "model", "--format", "md"])
+    assert result.exit_code == 0
+    assert result.stdout == document
+
+
+def test_data_analysis_markdown_instruction_and_report(
+    fake_mux: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "data.csv"
+    source.write_text("a\n1\n", encoding="utf-8")
+    instruction = tmp_path / "instruction.md"
+    instruction.write_text("# Analyse\n\nCalcule la somme.\n", encoding="utf-8")
+    spy = Mock(wraps=FakeMux().analyze_data)
+    monkeypatch.setattr(FakeMux, "analyze_data", spy)
+    result = runner.invoke(
+        app,
+        ["data", "analyze", str(source), "--instruction-file", str(instruction), "--format", "md"],
+    )
+    assert result.exit_code == 0, result.output
+    assert spy.call_args.kwargs["instruction"] == instruction.read_text(encoding="utf-8")
+    assert result.stdout == "# Report\n"
+
+
+def test_embed_accepts_multiple_markdown_files(
+    fake_mux: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = [tmp_path / "a.md", tmp_path / "b.md"]
+    documents = ["# A\n", "# B\n"]
+    for path, document in zip(paths, documents, strict=True):
+        path.write_text(document, encoding="utf-8")
+    spy = Mock(wraps=FakeMux().run)
+    monkeypatch.setattr(FakeMux, "run", spy)
+    result = runner.invoke(
+        app,
+        ["embed", "--model", "model", "--text-file", str(paths[0]), "--text-file", str(paths[1])],
+    )
+    assert result.exit_code == 0, result.output
+    assert spy.call_args.kwargs["inputs"] == documents
+
+
+@pytest.mark.parametrize(
+    ("data", "extra", "message"),
+    [
+        (None, [], "regular local file"),
+        (b" \n", [], "must contain text"),
+        (b"\xff", [], "must be UTF-8"),
+        (b"x" * (1024 * 1024 + 1), [], "exceeds 1 MiB"),
+        (b"# Prompt", ["--prompt", "inline"], "exactly one"),
+    ],
+    ids=["missing", "blank", "encoding", "size", "conflict"],
+)
+def test_invalid_markdown_inputs_fail_before_facade_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    data: bytes | None,
+    extra: list[str],
+    message: str,
+) -> None:
+    path = tmp_path / "prompt.md"
+    if data is not None:
+        path.write_bytes(data)
+    facade = Mock(side_effect=AssertionError("Invalid input reached the facade"))
+    monkeypatch.setattr(CortexMux, "from_env", facade)
+    result = runner.invoke(app, ["chat", "--model", "model", "--prompt-file", str(path), *extra])
+    assert result.exit_code == 2
+    assert message in result.output
+    facade.assert_not_called()

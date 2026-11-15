@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from html.parser import HTMLParser
 
+from cortexmux.core.exceptions import WebFetchError
 from cortexmux.web.schemas import WebTable
 
 _IGNORED_TAGS = {"script", "style", "noscript", "svg", "template"}
@@ -37,10 +38,16 @@ _BREAK_TAGS = {
 
 
 class _DocumentParser(HTMLParser):
-    def __init__(self, *, max_tables: int, max_table_rows: int) -> None:
+    def __init__(
+        self, *, max_tables: int, max_table_rows: int, max_table_columns: int, max_table_cells: int
+    ) -> None:
         super().__init__(convert_charrefs=True)
         self.max_tables = max_tables
         self.max_table_rows = max_table_rows
+        self.max_table_columns = max_table_columns
+        self.max_table_cells = max_table_cells
+        self.cells_used = 0
+        self.current_table_cells = 0
         self.ignored_depth = 0
         self.in_title = False
         self.title_parts: list[str] = []
@@ -65,7 +72,12 @@ class _DocumentParser(HTMLParser):
             self.text_parts.append("\n")
         if tag == "table" and self.table_rows is None and len(self.tables) < self.max_tables:
             self.table_rows = []
-        elif tag == "tr" and self.table_rows is not None:
+            self.current_table_cells = 0
+        elif (
+            tag == "tr"
+            and self.table_rows is not None
+            and len(self.table_rows) < self.max_table_rows + 1
+        ):
             self.current_row = []
             self.current_row_has_header = False
         elif tag in {"th", "td"} and self.current_row is not None:
@@ -83,7 +95,12 @@ class _DocumentParser(HTMLParser):
             self.in_title = False
         elif tag in {"th", "td"} and self.current_cell is not None:
             if self.current_row is not None:
+                if len(self.current_row) >= self.max_table_columns:
+                    raise WebFetchError("Web table exceeded the column limit.")
+                if self.cells_used + self.current_table_cells >= self.max_table_cells:
+                    raise WebFetchError("Web tables exceeded the cell limit.")
                 self.current_row.append(_clean_inline(" ".join(self.current_cell)))
+                self.current_table_cells += 1
             self.current_cell = None
         elif tag == "tr" and self.current_row is not None:
             if (
@@ -95,8 +112,17 @@ class _DocumentParser(HTMLParser):
             self.current_row = None
             self.current_row_has_header = False
         elif tag == "table" and self.table_rows is not None:
+            cells = 0
+            if self.table_rows:
+                width = max(len(row) for row, _is_header in self.table_rows)
+                first_is_header = self.table_rows[0][1]
+                data_rows = len(self.table_rows) - int(first_is_header)
+                cells = width * (1 + min(data_rows, self.max_table_rows))
+                if self.cells_used + cells > self.max_table_cells:
+                    raise WebFetchError("Web tables exceeded the cell limit.")
             table = _build_table(self.table_rows, max_rows=self.max_table_rows)
             if table is not None:
+                self.cells_used += cells
                 self.tables.append(table)
             self.table_rows = None
         if tag in _BREAK_TAGS:
@@ -118,9 +144,16 @@ def extract_html(
     *,
     max_tables: int,
     max_table_rows: int,
+    max_table_columns: int = 256,
+    max_table_cells: int = 100_000,
 ) -> tuple[str | None, str, list[WebTable]]:
     """Extract normalized visible text, document title, and simple tables."""
-    parser = _DocumentParser(max_tables=max_tables, max_table_rows=max_table_rows)
+    parser = _DocumentParser(
+        max_tables=max_tables,
+        max_table_rows=max_table_rows,
+        max_table_columns=max_table_columns,
+        max_table_cells=max_table_cells,
+    )
     parser.feed(html)
     parser.close()
     title = _clean_inline(" ".join(parser.title_parts)) or None

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from cortexmux.core.capabilities import ProviderCapability, TemperatureRange
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import (
     InvalidRequestError,
@@ -16,6 +17,7 @@ from cortexmux.core.exceptions import (
     ProviderRegistrationError,
     RemoteHostNotAllowedError,
 )
+from cortexmux.core.json_schema import validate_json_schema
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
 from cortexmux.core.security import safe_output_path, validate_provider_url, validate_web_url
@@ -23,6 +25,21 @@ from cortexmux.core.types import TaskType
 from cortexmux.facade import CortexMux
 from cortexmux.schemas.requests import TextGenerationRequest
 from tests.conftest import StubProvider
+
+
+class TemperatureProvider(StubProvider):
+    """Provider double exposing model-specific sampling bounds."""
+
+    async def get_capabilities(self, model: str | None = None) -> list[ProviderCapability]:
+        maximum = 1.0 if model == "strict" else 2.0
+        return [
+            ProviderCapability(
+                provider=self.name,
+                model=model,
+                task_types=frozenset(self.tasks),
+                temperature=TemperatureRange(minimum=0, maximum=maximum),
+            )
+        ]
 
 
 def test_registry_lifecycle(stub_provider: StubProvider) -> None:
@@ -78,7 +95,13 @@ async def test_project_model_profiles_select_installed_models() -> None:
             "routing": {
                 "active_profile": "fast",
                 "profiles": {
-                    "fast": {"text_generation": {"provider": "ollama", "model": "fast-model"}},
+                    "fast": {
+                        "text_generation": {
+                            "provider": "ollama",
+                            "model": "fast-model",
+                            "options": {"num_ctx": 8192, "temperature": 0.2},
+                        }
+                    },
                     "balanced": {
                         "text_generation": {
                             "provider": "ollama",
@@ -94,12 +117,78 @@ async def test_project_model_profiles_select_installed_models() -> None:
     router = Router(registry, config)
 
     default = await router.route(TextGenerationRequest(prompt="hello"))
-    selected = await router.route(TextGenerationRequest(prompt="hello", model_profile="balanced"))
+    selected = await router.route(
+        TextGenerationRequest(
+            prompt="hello",
+            model_profile="balanced",
+            options={"temperature": 0.1},
+        )
+    )
 
     assert default.model == "fast-model"
     assert default.routing is not None
     assert default.routing.routing_reason == "configured_model_profile"
+    assert registry.get("ollama").requests[0].options == {
+        "num_ctx": 8192,
+        "temperature": 0.2,
+    }
     assert selected.model == "balanced-model"
+    assert registry.get("ollama").requests[1].options == {"temperature": 0.1}
+
+
+def test_model_temperature_is_validated_applied_and_overridable() -> None:
+    provider = TemperatureProvider("sampling", models={"strict", "flexible"})
+    config = CortexMuxConfig.model_validate(
+        {
+            "routing": {
+                "active_profile": "analysis",
+                "profiles": {
+                    "analysis": {
+                        "text_generation": {
+                            "provider": "sampling",
+                            "model": "strict",
+                            "options": {"temperature": 0.1},
+                        }
+                    }
+                },
+            }
+        }
+    )
+    mux = CortexMux(config, register_builtin_providers=False)
+    mux.register_provider(provider)
+
+    with mux:
+        setting = mux.set_temperature(0.7, provider="sampling", model="strict")
+        assert setting.value == 0.7
+        assert setting.minimum == 0
+        assert setting.maximum == 1
+        assert mux.temperature_setting(provider="sampling", model="strict") == setting
+
+        mux.generate("default")
+        mux.generate("override", provider="sampling", model="strict", temperature=0.2)
+        mux.clear_temperature(provider="sampling", model="strict")
+        mux.generate("cleared", provider="sampling", model="strict")
+
+    assert provider.requests[0].options == {"temperature": 0.7}
+    assert provider.requests[1].options == {"temperature": 0.2}
+    assert provider.requests[2].options == {}
+
+
+def test_model_temperature_rejects_unsupported_and_out_of_range_values() -> None:
+    mux = CortexMux(CortexMuxConfig(), register_builtin_providers=False)
+    mux.register_provider(TemperatureProvider("sampling", models={"strict", "flexible"}))
+    mux.register_provider(StubProvider("unsupported", models={"model"}))
+
+    with mux:
+        with pytest.raises(InvalidRequestError, match="outside") as out_of_range:
+            mux.set_temperature(1.2, provider="sampling", model="strict")
+        assert out_of_range.value.context["maximum"] == 1.0
+
+        setting = mux.set_temperature(1.2, provider="sampling", model="flexible")
+        assert setting.maximum == 2.0
+
+        with pytest.raises(InvalidRequestError, match="does not declare"):
+            mux.set_temperature(0.2, provider="unsupported", model="model")
 
 
 @pytest.mark.asyncio
@@ -180,11 +269,15 @@ def test_example_model_profiles_use_exact_installed_tags() -> None:
     config = CortexMuxConfig.load(path=config_path)
     fast = config.routing.profile_for("fast")
     balanced = config.routing.profile_for("balanced")
+    quality = config.routing.profile_for("quality")
 
     assert fast is not None and fast.embedding is not None
     assert balanced is not None and balanced.embedding is not None
+    assert quality is not None and quality.chat is not None
     assert fast.embedding.model == "nomic-embed-text:latest"
     assert balanced.embedding.model == "nomic-embed-text:latest"
+    assert quality.chat.model == "qwen3.6:27b"
+    assert quality.chat.options["num_ctx"] == 8192
 
 
 def test_web_environment_configuration() -> None:
@@ -198,6 +291,18 @@ def test_web_environment_configuration() -> None:
     assert config.web.enabled
     assert config.web.allowed_hosts == {"one.example", "two.example"}
     assert not config.web.allow_private_hosts
+
+
+def test_openai_environment_configuration_is_explicit() -> None:
+    config = CortexMuxConfig.load(
+        environ={
+            "CORTEXMUX_OPENAI_ENABLED": "true",
+            "CORTEXMUX_OPENAI_BASE_URL": "https://api.openai.com/v1",
+        }
+    )
+    assert config.providers.openai.enabled
+    assert config.providers.openai.base_url == "https://api.openai.com/v1"
+    assert config.providers.openai.api_key is None
 
 
 def test_network_policy_and_safe_paths(tmp_path: Path) -> None:
@@ -246,3 +351,14 @@ def test_exception_serialization() -> None:
         "message": "ambiguous",
         "context": {"task": "chat"},
     }
+
+
+@pytest.mark.parametrize("json_type", ["integer", "number"])
+def test_json_schema_numeric_types_reject_booleans(json_type: str) -> None:
+    with pytest.raises(ValueError, match=f"must be {json_type}"):
+        validate_json_schema(True, {"type": json_type})
+
+
+def test_json_schema_rejects_unsupported_validation_keywords() -> None:
+    with pytest.raises(ValueError, match="Unsupported JSON Schema keyword: format"):
+        validate_json_schema("2026-09-07", {"type": "string", "format": "date"})

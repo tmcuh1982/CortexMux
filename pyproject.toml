@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cortexmux"
-version = "0.3.0"
+version = "1.2.0rc2"
 description = "A modular, local-first router for AI and deterministic data-analysis tasks."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ license = { file = "LICENSE" }
 authors = [{ name = "CortexMux contributors" }]
 keywords = ["ollama", "comfyui", "ai", "data-analysis", "local-first"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
@@ -29,17 +29,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+openai = ["openai[realtime]>=3.8.0,<4"]
 comfyui = ["websockets>=12,<16"]
 data = ["numpy>=1.26", "pandas>=2.2"]
 polars = ["numpy>=1.26", "pandas>=2.2", "polars>=1.0"]
 duckdb = ["duckdb>=1.0", "numpy>=1.26", "pandas>=2.2"]
 excel = ["openpyxl>=3.1"]
 visualization = ["matplotlib>=3.8"]
+yaml = ["PyYAML>=6,<7"]
 all = [
-  "cortexmux[comfyui,data,polars,duckdb,excel,visualization]",
+  "cortexmux[openai,comfyui,data,polars,duckdb,excel,visualization,yaml]",
 ]
 dev = [
   "build>=1.2",
+  "hatchling>=1.25",
   "coverage[toml]>=7.5",
   "mypy>=1.10",
   "pytest>=8.2",
@@ -53,6 +56,9 @@ dev = [
 
 [project.scripts]
 cortexmux = "cortexmux.cli.main:app"
+
+[tool.hatch.build]
+exclude = ["**/*.codex-case.json", "**/*.codex-validation.json", ".cortexmux-private/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cortexmux"]
@@ -78,13 +84,23 @@ warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["numpy.*", "pandas.*", "polars.*", "duckdb.*", "matplotlib.*", "websockets.*"]
+module = [
+  "numpy.*",
+  "pandas.*",
+  "polars.*",
+  "duckdb.*",
+  "matplotlib.*",
+  "openai.*",
+  "websockets.*",
+  "yaml.*",
+]
 ignore_missing_imports = true
 follow_imports = "skip"
 
 [tool.pytest.ini_options]
 addopts = "-ra"
 asyncio_mode = "auto"
+pythonpath = ["src"]
 testpaths = ["tests"]
 markers = ["integration: requires explicitly enabled local services"]
 

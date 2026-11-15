@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from types import TracebackType
 
 from cortexmux.core.capabilities import ProviderCapability
+from cortexmux.core.exceptions import UnsupportedTaskError
 from cortexmux.core.types import TaskType
 from cortexmux.schemas.common import HealthStatus, ModelInfo
 from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import CortexRequest
-from cortexmux.schemas.responses import CortexResponse
+from cortexmux.schemas.responses import CortexResponse, StreamEvent
 
 
 class BaseProvider(ABC):
@@ -25,6 +27,10 @@ class BaseProvider(ABC):
     @abstractmethod
     async def list_models(self) -> list[ModelInfo]:
         """List normalized models or engines."""
+
+    def accepts_unlisted_model(self, model: str) -> bool:
+        """Allow an API-supported model absent from discovery, when applicable."""
+        return False
 
     @abstractmethod
     async def get_capabilities(self, model: str | None = None) -> list[ProviderCapability]:
@@ -45,6 +51,16 @@ class BaseProvider(ABC):
     ) -> CortexResponse:
         """Execute a request, ignoring progress when the provider has no event support."""
         return await self.execute(request)
+
+    async def stream(self, request: CortexRequest) -> AsyncIterator[StreamEvent]:
+        """Stream a request when implemented by the provider."""
+        raise UnsupportedTaskError(
+            "Provider does not implement streaming for this request.",
+            provider=self.name,
+            task=request.task.value,
+            request_id=request.request_id,
+        )
+        yield  # pragma: no cover
 
     async def close(self) -> None:
         """Release provider resources."""

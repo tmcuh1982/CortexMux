@@ -4,20 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Coroutine
+import os
+from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Iterator
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from types import TracebackType
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from cortexmux.core.capabilities import ProviderCapability, TemperatureRange, TemperatureSetting
 from cortexmux.core.config import CortexMuxConfig
-from cortexmux.core.exceptions import InvalidRequestError
+from cortexmux.core.exceptions import (
+    ConfigurationError,
+    InvalidRequestError,
+    ProviderResponseError,
+    StructuredOutputValidationError,
+)
 from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
 from cortexmux.core.security import validate_provider_url
 from cortexmux.core.types import MessageRole, TaskType
+from cortexmux.mcp import MCPStdioClient
 from cortexmux.providers.base import BaseProvider
+from cortexmux.providers.codex import CodexClient, CodexProvider
+from cortexmux.providers.codex.schemas import (
+    CodexAccount,
+    CodexLogin,
+    CodexLoginResult,
+    CodexRateLimits,
+)
 from cortexmux.providers.comfyui import (
     ComfyUIClient,
     ComfyUIProvider,
@@ -25,14 +41,34 @@ from cortexmux.providers.comfyui import (
     WorkflowDefinition,
 )
 from cortexmux.providers.data import DataAnalysisProvider, MathVerifier
+from cortexmux.providers.deepseek import DeepSeekClient, DeepSeekProvider
+from cortexmux.providers.deepseek.client import validate_deepseek_base_url
+from cortexmux.providers.gemini import GeminiClient, GeminiProvider
+from cortexmux.providers.gemini.client import validate_gemini_base_url
+from cortexmux.providers.grok import GrokClient, GrokProvider
+from cortexmux.providers.grok.client import validate_grok_base_url
+from cortexmux.providers.mlx import MLXClient, MLXProvider
+from cortexmux.providers.mlx.client import validate_mlx_base_url
 from cortexmux.providers.ollama import OllamaClient, OllamaProvider
+from cortexmux.providers.openai import (
+    OpenAIAsyncSession,
+    OpenAIClient,
+    OpenAIFunctionTool,
+    OpenAIProvider,
+    OpenAIReasoningEffort,
+)
+from cortexmux.providers.qwencloud import QwenCloudClient, QwenCloudProvider
+from cortexmux.providers.qwencloud.client import validate_qwencloud_base_url
+from cortexmux.providers.typesafe import TypeSafeClient, TypeSafeProvider
 from cortexmux.schemas.calculations import CalculationClaim, CalculationVerification
 from cortexmux.schemas.common import ChatMessage, HealthStatus, ModelInfo
+from cortexmux.schemas.decisions import DecisionQuestion
 from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import (
     ChatRequest,
     CortexRequest,
     DataAnalysisRequest,
+    DecisionRequest,
     EmbeddingRequest,
     ImageGenerationRequest,
     StructuredOutputRequest,
@@ -43,12 +79,18 @@ from cortexmux.schemas.responses import (
     ChatResponse,
     CortexResponse,
     DataAnalysisResponse,
+    DecisionResponse,
     EmbeddingResponse,
     ImageGenerationResponse,
+    StreamEvent,
     StructuredResponse,
+    StructuredStreamChunk,
+    StructuredStreamCompleted,
+    StructuredStreamEvent,
     TextResponse,
     VisionResponse,
 )
+from cortexmux.selection import ModelQualifier, QualificationManifest, QualificationSuite
 from cortexmux.web import WebPage, WebPageFetcher
 
 ResponseT = TypeVar("ResponseT", bound=CortexResponse)
@@ -85,6 +127,46 @@ class CortexMux:
         """Construct from TOML, environment variables, and explicit overrides."""
         return cls(CortexMuxConfig.load(path=config_path, overrides=overrides))
 
+    @asynccontextmanager
+    async def openai_async_session(
+        self,
+        *,
+        model: str = "gpt-6-astra",
+        instructions: str | None = None,
+        tools: list[OpenAIFunctionTool] | None = None,
+        reasoning_effort: OpenAIReasoningEffort | str | None = None,
+    ) -> AsyncIterator[OpenAIAsyncSession]:
+        """Open an asynchronous Responses session for a supported OpenAI model."""
+        settings = self.config.providers.openai
+        if not settings.enabled:
+            raise ConfigurationError("OpenAI is disabled.", provider="openai")
+        base_url = validate_provider_url(
+            settings.base_url,
+            allow_remote_hosts=self.config.core.allow_remote_hosts,
+            approved_hosts=self.config.core.approved_hosts,
+        )
+        api_key = (
+            settings.api_key.get_secret_value()
+            if settings.api_key is not None
+            else os.environ.get(settings.api_key_env)
+        )
+        if not api_key:
+            raise ConfigurationError(
+                "OpenAI is enabled but its API key is unavailable.",
+                environment_variable=settings.api_key_env,
+            )
+        session = OpenAIAsyncSession(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            instructions=instructions,
+            tools=tools,
+            reasoning_effort=reasoning_effort,
+            timeout=settings.timeout_seconds,
+        )
+        async with session:
+            yield session
+
     def _register_builtins(self) -> None:
         core = self.config.core
         if self.config.providers.ollama.enabled:
@@ -101,7 +183,238 @@ class CortexMux:
                     key: value.get_secret_value() for key, value in ollama_settings.headers.items()
                 },
             )
-            self.registry.register(OllamaProvider(ollama_client))
+            capitalforge_mcp = None
+            capitalforge_settings = self.config.mcp.capitalforge
+            if capitalforge_settings.enabled:
+                capitalforge_mcp = MCPStdioClient(
+                    capitalforge_settings,
+                    allowed_tools=frozenset(
+                        {
+                            "capitalforge_source_catalog",
+                            "capitalforge_portfolio_summary",
+                            "capitalforge_positions",
+                            "capitalforge_zonebourse_signals",
+                            "capitalforge_public_signals",
+                        }
+                    ),
+                )
+            self.registry.register(OllamaProvider(ollama_client, capitalforge_mcp=capitalforge_mcp))
+        if self.config.providers.openai.enabled:
+            openai_settings = self.config.providers.openai
+            url = validate_provider_url(
+                openai_settings.base_url,
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                openai_settings.api_key.get_secret_value()
+                if openai_settings.api_key is not None
+                else os.environ.get(openai_settings.api_key_env)
+            )
+            if not configured_key:
+                raise ConfigurationError(
+                    "OpenAI is enabled but its API key is unavailable.",
+                    environment_variable=openai_settings.api_key_env,
+                )
+            self.registry.register(
+                OpenAIProvider(
+                    OpenAIClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=openai_settings.timeout_seconds,
+                        max_retries=openai_settings.max_retries,
+                        retry_base_delay_seconds=openai_settings.retry_base_delay_seconds,
+                        retry_max_delay_seconds=openai_settings.retry_max_delay_seconds,
+                    )
+                )
+            )
+        if self.config.providers.gemini.enabled:
+            gemini_settings = self.config.providers.gemini
+            url = validate_provider_url(
+                validate_gemini_base_url(gemini_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                gemini_settings.api_key.get_secret_value()
+                if gemini_settings.api_key is not None
+                else os.environ.get(gemini_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "Gemini is enabled but its API key is unavailable.",
+                    environment_variable=gemini_settings.api_key_env,
+                )
+            self.registry.register(
+                GeminiProvider(
+                    GeminiClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=gemini_settings.timeout_seconds,
+                        max_retries=gemini_settings.max_retries,
+                        retry_base_delay_seconds=gemini_settings.retry_base_delay_seconds,
+                        retry_max_delay_seconds=gemini_settings.retry_max_delay_seconds,
+                    )
+                )
+            )
+        if self.config.providers.grok.enabled:
+            grok_settings = self.config.providers.grok
+            url = validate_provider_url(
+                validate_grok_base_url(grok_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                grok_settings.api_key.get_secret_value()
+                if grok_settings.api_key is not None
+                else os.environ.get(grok_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "Grok is enabled but its API key is unavailable.",
+                    environment_variable=grok_settings.api_key_env,
+                )
+            self.registry.register(
+                GrokProvider(
+                    GrokClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=grok_settings.timeout_seconds,
+                        max_retries=grok_settings.max_retries,
+                        retry_base_delay_seconds=grok_settings.retry_base_delay_seconds,
+                        retry_max_delay_seconds=grok_settings.retry_max_delay_seconds,
+                    )
+                )
+            )
+        if self.config.providers.deepseek.enabled:
+            deepseek_settings = self.config.providers.deepseek
+            url = validate_provider_url(
+                validate_deepseek_base_url(deepseek_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                deepseek_settings.api_key.get_secret_value()
+                if deepseek_settings.api_key is not None
+                else os.environ.get(deepseek_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "DeepSeek is enabled but its API key is unavailable.",
+                    environment_variable=deepseek_settings.api_key_env,
+                )
+            self.registry.register(
+                DeepSeekProvider(
+                    DeepSeekClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=deepseek_settings.timeout_seconds,
+                    ),
+                    models=[
+                        model
+                        for model in deepseek_settings.defaults.model_dump().values()
+                        if isinstance(model, str)
+                    ],
+                    server_version=deepseek_settings.server_version,
+                    behavior_profiles=deepseek_settings.behavior_profiles,
+                )
+            )
+        if self.config.providers.qwencloud.enabled:
+            qwencloud_settings = self.config.providers.qwencloud
+            url = validate_provider_url(
+                validate_qwencloud_base_url(qwencloud_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                qwencloud_settings.api_key.get_secret_value()
+                if qwencloud_settings.api_key is not None
+                else os.environ.get(qwencloud_settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "Qwen Cloud is enabled but its API key is unavailable.",
+                    environment_variable=qwencloud_settings.api_key_env,
+                )
+            self.registry.register(
+                QwenCloudProvider(
+                    QwenCloudClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=qwencloud_settings.timeout_seconds,
+                    ),
+                    models=[
+                        model
+                        for model in qwencloud_settings.defaults.model_dump().values()
+                        if isinstance(model, str)
+                    ],
+                )
+            )
+        for mlx_name, mlx_settings in (
+            ("mlx", self.config.providers.mlx),
+            ("mlx_lm", self.config.providers.mlx_lm),
+            ("mlx_vlm", self.config.providers.mlx_vlm),
+        ):
+            if not mlx_settings.enabled:
+                continue
+            url = validate_provider_url(
+                validate_mlx_base_url(mlx_settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            self.registry.register(
+                MLXProvider(
+                    MLXClient(
+                        url,
+                        api_key=(
+                            mlx_settings.api_key.get_secret_value()
+                            if mlx_settings.api_key is not None
+                            else os.environ.get(mlx_settings.api_key_env)
+                        ),
+                        timeout=mlx_settings.timeout_seconds,
+                        provider_name=mlx_name,
+                    ),
+                    models=[
+                        model
+                        for model in mlx_settings.defaults.model_dump().values()
+                        if isinstance(model, str)
+                    ],
+                    name=mlx_name,
+                    server_version=mlx_settings.server_version,
+                    check_openapi_version=mlx_settings.check_openapi_version,
+                    behavior_profiles=mlx_settings.behavior_profiles,
+                )
+            )
+        if self.config.providers.typesafe.enabled:
+            settings = self.config.providers.typesafe
+            from cortexmux.providers.typesafe.client import validate_typesafe_base_url
+
+            url = validate_provider_url(
+                validate_typesafe_base_url(settings.base_url),
+                allow_remote_hosts=core.allow_remote_hosts,
+                approved_hosts=core.approved_hosts,
+            )
+            configured_key = (
+                settings.api_key.get_secret_value()
+                if settings.api_key is not None
+                else os.environ.get(settings.api_key_env)
+            )
+            if not configured_key or not configured_key.strip():
+                raise ConfigurationError(
+                    "TypeSafe is enabled but its API key is unavailable.",
+                    environment_variable=settings.api_key_env,
+                )
+            self.registry.register(
+                TypeSafeProvider(
+                    TypeSafeClient(
+                        url,
+                        api_key=configured_key,
+                        timeout=settings.timeout_seconds,
+                    )
+                )
+            )
+        if self.config.providers.codex.enabled:
+            self.registry.register(CodexProvider(CodexClient(self.config.providers.codex)))
         if self.config.providers.comfyui.enabled:
             comfyui_settings = self.config.providers.comfyui
             url = validate_provider_url(
@@ -133,6 +446,60 @@ class CortexMux:
             )
         )
 
+    def _codex(self) -> CodexProvider:
+        provider = self.registry.get("codex")
+        if not isinstance(provider, CodexProvider):
+            raise ConfigurationError("The built-in Codex provider is required.")
+        return provider
+
+    async def acodex_account(self) -> CodexAccount:
+        """Read Codex account status without exposing credentials."""
+        return await self._codex().account()
+
+    def codex_account(self) -> CodexAccount:
+        """Read Codex account status without exposing credentials."""
+        return self._sync(self.acodex_account())
+
+    async def acodex_login_start(self, *, device_code: bool = False) -> CodexLogin:
+        """Begin the application-presented ChatGPT login."""
+        return await self._codex().login_start(device_code=device_code)
+
+    def codex_login_start(self, *, device_code: bool = False) -> CodexLogin:
+        """Begin the application-presented ChatGPT login."""
+        return self._sync(self.acodex_login_start(device_code=device_code))
+
+    async def acodex_login_result(self, login_id: str, *, timeout: float = 300) -> CodexLoginResult:
+        """Wait for a sanitized Codex login result."""
+        return await self._codex().login_result(login_id, timeout=timeout)
+
+    def codex_login_result(self, login_id: str, *, timeout: float = 300) -> CodexLoginResult:
+        """Wait for a sanitized Codex login result."""
+        return self._sync(self.acodex_login_result(login_id, timeout=timeout))
+
+    async def acodex_login_cancel(self, login_id: str) -> None:
+        """Cancel a pending Codex login."""
+        return await self._codex().login_cancel(login_id)
+
+    def codex_login_cancel(self, login_id: str) -> None:
+        """Cancel a pending Codex login."""
+        return self._sync(self.acodex_login_cancel(login_id))
+
+    async def acodex_logout(self) -> None:
+        """Sign out only the dedicated CortexMux Codex home."""
+        return await self._codex().logout()
+
+    def codex_logout(self) -> None:
+        """Sign out only the dedicated CortexMux Codex home."""
+        return self._sync(self.acodex_logout())
+
+    async def acodex_rate_limits(self) -> CodexRateLimits:
+        """Read subscription limits without inferred costs."""
+        return await self._codex().rate_limits()
+
+    def codex_rate_limits(self) -> CodexRateLimits:
+        """Read subscription limits without inferred costs."""
+        return self._sync(self.acodex_rate_limits())
+
     async def _execute_nested(self, request: CortexRequest) -> CortexResponse:
         """Route internal model requests through the same validation policy."""
         return await self.router.route(request)
@@ -140,6 +507,79 @@ class CortexMux:
     def register_provider(self, provider: BaseProvider, *, replace: bool = False) -> None:
         """Register a custom provider on this facade instance."""
         self.registry.register(provider, replace=replace)
+
+    async def aset_temperature(
+        self,
+        temperature: float,
+        *,
+        provider: str,
+        model: str,
+    ) -> TemperatureSetting:
+        """Set a validated default temperature for one provider/model pair."""
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
+            raise InvalidRequestError(
+                "Temperature must be a finite number.", provider=provider, model=model
+            )
+        if not provider or not model:
+            raise InvalidRequestError(
+                "Provider and model are required to set temperature.",
+                provider=provider or None,
+                model=model or None,
+            )
+        provider_instance = self.registry.get(provider)
+        capabilities = await provider_instance.get_capabilities(model)
+        temperature_range = _temperature_range_for(capabilities, model)
+        if temperature_range is None:
+            raise InvalidRequestError(
+                "The provider/model does not declare temperature support.",
+                provider=provider,
+                model=model,
+            )
+        value = float(temperature)
+        if not temperature_range.minimum <= value <= temperature_range.maximum:
+            raise InvalidRequestError(
+                "Temperature is outside the provider/model range.",
+                provider=provider,
+                model=model,
+                temperature=value,
+                minimum=temperature_range.minimum,
+                maximum=temperature_range.maximum,
+            )
+        setting = TemperatureSetting(
+            provider=provider,
+            model=model,
+            value=value,
+            minimum=temperature_range.minimum,
+            maximum=temperature_range.maximum,
+        )
+        self.router.set_temperature(setting)
+        return setting
+
+    def set_temperature(
+        self,
+        temperature: float,
+        *,
+        provider: str,
+        model: str,
+    ) -> TemperatureSetting:
+        """Set a validated default temperature for one provider/model pair."""
+        return self._sync(self.aset_temperature(temperature, provider=provider, model=model))
+
+    def clear_temperature(self, *, provider: str, model: str) -> None:
+        """Remove the instance-level default temperature for a provider/model pair."""
+        self.router.clear_temperature(provider=provider, model=model)
+
+    def temperature_setting(self, *, provider: str, model: str) -> TemperatureSetting | None:
+        """Return the current instance-level temperature default, if configured."""
+        return self.router.temperature_setting(provider=provider, model=model)
+
+    async def aqualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        """Benchmark configured provider/model combinations asynchronously."""
+        return await ModelQualifier(self.registry).qualify(suite)
+
+    def qualify_models(self, suite: QualificationSuite) -> QualificationManifest:
+        """Benchmark configured provider/model combinations synchronously."""
+        return self._sync(self.aqualify_models(suite))
 
     async def arun(self, request: CortexRequest | TaskType | str, **fields: Any) -> CortexResponse:
         """Validate and execute a generic asynchronous request."""
@@ -152,6 +592,62 @@ class CortexMux:
         """Validate and execute a generic synchronous request."""
         return self._sync(self.arun(request, **fields))
 
+    async def adecide(
+        self,
+        state: str | dict[str, Any] | list[Any],
+        questions: dict[str, DecisionQuestion],
+        *,
+        provider: str | None = "typesafe",
+        model: str | None = None,
+        timeout: float | None = None,
+    ) -> DecisionResponse:
+        """Ask typed decision questions without applying application policy."""
+        return cast(
+            DecisionResponse,
+            await self.arun(
+                DecisionRequest(
+                    state=state,
+                    questions=questions,
+                    provider=provider,
+                    model=model,
+                    timeout=timeout,
+                )
+            ),
+        )
+
+    def decide(
+        self,
+        state: str | dict[str, Any] | list[Any],
+        questions: dict[str, DecisionQuestion],
+        *,
+        provider: str | None = "typesafe",
+        model: str | None = None,
+        timeout: float | None = None,
+    ) -> DecisionResponse:
+        """Ask typed decision questions through the shared synchronous runner."""
+        return self._sync(
+            self.adecide(state, questions, provider=provider, model=model, timeout=timeout)
+        )
+
+    async def astream(self, request: CortexRequest) -> AsyncGenerator[StreamEvent, None]:
+        """Stream a typed request; close the iterator on early consumer exit."""
+        async with aclosing(self.router.stream(request)) as stream:
+            async for event in stream:
+                yield event
+
+    def stream(self, request: CortexRequest) -> Iterator[StreamEvent]:
+        """Stream a typed request using this facade's shared synchronous runner."""
+        self._ensure_sync_context()
+        stream = self.astream(request)
+        try:
+            while True:
+                try:
+                    yield self._sync(_next_generic_event(stream))
+                except StopAsyncIteration:
+                    return
+        finally:
+            self._sync(stream.aclose())
+
     async def agenerate(
         self,
         prompt: str,
@@ -159,6 +655,8 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        system: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> TextResponse:
         """Generate text asynchronously."""
@@ -168,6 +666,8 @@ class CortexMux:
                 provider=provider,
                 model=model,
                 model_profile=model_profile,
+                system=system,
+                timeout=timeout,
                 options=options,
             )
         )
@@ -180,6 +680,8 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        system: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> TextResponse:
         """Generate text synchronously."""
@@ -189,6 +691,8 @@ class CortexMux:
                 provider=provider,
                 model=model,
                 model_profile=model_profile,
+                system=system,
+                timeout=timeout,
                 **options,
             )
         )
@@ -201,6 +705,7 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> ChatResponse:
         """Run a chat request asynchronously."""
@@ -215,6 +720,7 @@ class CortexMux:
                 provider=provider,
                 model=model,
                 model_profile=model_profile,
+                timeout=timeout,
                 options=options,
             )
         )
@@ -228,6 +734,7 @@ class CortexMux:
         provider: str | None = None,
         model: str | None = None,
         model_profile: str | None = None,
+        timeout: float | None = None,
         **options: Any,
     ) -> ChatResponse:
         """Run a chat request synchronously."""
@@ -236,6 +743,57 @@ class CortexMux:
                 prompt,
                 messages=messages,
                 provider=provider,
+                model=model,
+                model_profile=model_profile,
+                timeout=timeout,
+                **options,
+            )
+        )
+
+    async def acapitalforge_chat(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list[ChatMessage] | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
+    ) -> ChatResponse:
+        """Chat with Ollama while granting only CapitalForge's five read tools."""
+        normalized = messages or (
+            [ChatMessage(role=MessageRole.USER, content=prompt)] if prompt else None
+        )
+        if not normalized:
+            raise InvalidRequestError("capitalforge_chat requires prompt or messages")
+        request = ChatRequest(
+            messages=normalized,
+            model=model,
+            model_profile=model_profile,
+            options=options,
+        )
+        provider, selected_model, _reason = self.router.select(request)
+        if not isinstance(provider, OllamaProvider):
+            raise InvalidRequestError("CapitalForge chat requires the built-in Ollama provider.")
+        await self.router._ensure_model_is_available(provider, selected_model, request)
+        selected_request = request.model_copy(
+            update={"provider": provider.name, "model": selected_model}
+        )
+        return await provider.chat_with_capitalforge(selected_request)
+
+    def capitalforge_chat(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list[ChatMessage] | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        **options: Any,
+    ) -> ChatResponse:
+        """Synchronously chat with Ollama and read-only CapitalForge context."""
+        return self._sync(
+            self.acapitalforge_chat(
+                prompt,
+                messages=messages,
                 model=model,
                 model_profile=model_profile,
                 **options,
@@ -253,6 +811,8 @@ class CortexMux:
         model_profile: str | None = None,
         system: str | None = None,
         think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
     ) -> StructuredResponse:
         """Generate and validate structured JSON asynchronously."""
         schema = response_model.model_json_schema() if response_model else json_schema
@@ -267,11 +827,25 @@ class CortexMux:
                     json_schema=schema,
                     system=system,
                     think=think,
+                    timeout=timeout,
+                    options=options,
                 )
             ),
         )
         if response_model:
-            response.parsed = response_model.model_validate(response.parsed)
+            try:
+                response.parsed = response_model.model_validate(response.parsed)
+            except ValidationError:
+                diagnostic = dict((response.raw_metadata or {}).get("behavior", {}))
+                diagnostic["category"] = "schema"
+                error = StructuredOutputValidationError(
+                    "Structured output does not match the response model.",
+                    provider=response.provider,
+                    request_id=response.request_id,
+                    behavior=diagnostic,
+                )
+                error._private_audit = response.private_audit
+                raise error from None
         return response
 
     def structured(
@@ -285,6 +859,8 @@ class CortexMux:
         model_profile: str | None = None,
         system: str | None = None,
         think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
     ) -> StructuredResponse:
         """Generate and validate structured JSON synchronously."""
         return self._sync(
@@ -297,8 +873,91 @@ class CortexMux:
                 model_profile=model_profile,
                 system=system,
                 think=think,
+                timeout=timeout,
+                **options,
             )
         )
+
+    async def astream_structured(
+        self,
+        prompt: str,
+        *,
+        response_model: type[ModelT] | None = None,
+        json_schema: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        system: str | None = None,
+        think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
+    ) -> AsyncGenerator[StructuredStreamEvent, None]:
+        """Stream draft JSON fragments, then emit one fully validated result."""
+        schema = response_model.model_json_schema() if response_model else json_schema
+        request = StructuredOutputRequest(
+            prompt=prompt,
+            provider=provider,
+            model=model,
+            model_profile=model_profile,
+            json_schema=schema,
+            system=system,
+            think=think,
+            timeout=timeout,
+            options=options,
+        )
+        async with aclosing(self.router.stream(request)) as stream:
+            async for event in stream:
+                if isinstance(event, StructuredStreamChunk):
+                    yield event
+                    continue
+                if not isinstance(event, StructuredStreamCompleted):
+                    raise ProviderResponseError(
+                        "Provider returned an invalid structured stream event.",
+                        provider=event.provider,
+                        request_id=event.request_id,
+                    )
+                if response_model is not None:
+                    try:
+                        parsed = response_model.model_validate(event.parsed)
+                    except ValueError as exc:
+                        raise StructuredOutputValidationError(
+                            "The completed structured output does not match the response model.",
+                            provider=event.provider,
+                            request_id=event.request_id,
+                            safe_excerpt=_safe_excerpt(event.content),
+                        ) from exc
+                    event = event.model_copy(update={"parsed": parsed})
+                yield event
+
+    def stream_structured(
+        self,
+        prompt: str,
+        *,
+        response_model: type[ModelT] | None = None,
+        json_schema: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        model_profile: str | None = None,
+        system: str | None = None,
+        think: bool | None = None,
+        timeout: float | None = None,
+        **options: Any,
+    ) -> Iterator[StructuredStreamEvent]:
+        """Synchronously stream draft JSON fragments and one validated result."""
+        self._ensure_sync_context()
+        stream = self.astream_structured(
+            prompt,
+            response_model=response_model,
+            json_schema=json_schema,
+            provider=provider,
+            model=model,
+            model_profile=model_profile,
+            system=system,
+            think=think,
+            timeout=timeout,
+            **options,
+        )
+        return self._iterate_sync_stream(stream)
 
     async def avision(
         self,
@@ -649,18 +1308,37 @@ class CortexMux:
             self._sync_runner = None
 
     def _sync(self, awaitable: Coroutine[Any, Any, SyncT]) -> SyncT:
+        self._ensure_sync_context(awaitable)
+        if self._sync_runner is None:
+            self._sync_runner = asyncio.Runner()
+        return self._sync_runner.run(awaitable)
+
+    def _ensure_sync_context(self, awaitable: Coroutine[Any, Any, Any] | None = None) -> None:
+        """Reject synchronous facade calls from an already running event loop."""
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            if self._sync_runner is None:
-                self._sync_runner = asyncio.Runner()
-            return self._sync_runner.run(awaitable)
-        if hasattr(awaitable, "close"):
+            return
+        if awaitable is not None:
             awaitable.close()
         raise InvalidRequestError(
             "Synchronous CortexMux APIs cannot run inside an active event loop; "
             "use the corresponding async method."
         )
+
+    def _iterate_sync_stream(
+        self,
+        stream: AsyncGenerator[StructuredStreamEvent, None],
+    ) -> Iterator[StructuredStreamEvent]:
+        """Adapt one async generator to the facade's shared synchronous runner."""
+        try:
+            while True:
+                try:
+                    yield self._sync(_next_stream_event(stream))
+                except StopAsyncIteration:
+                    return
+        finally:
+            self._sync(_close_stream(stream))
 
     async def __aenter__(self) -> CortexMux:
         """Enter an asynchronous facade context."""
@@ -702,11 +1380,47 @@ def _request_for(task: TaskType | str, fields: dict[str, Any]) -> CortexRequest:
         TaskType.EMBEDDING: EmbeddingRequest,
         TaskType.IMAGE_GENERATION: ImageGenerationRequest,
         TaskType.DATA_ANALYSIS: DataAnalysisRequest,
+        TaskType.DECISION: DecisionRequest,
     }
     try:
         return classes[task_type].model_validate({"task": task_type, **fields})
     except ValueError as exc:
         raise InvalidRequestError("Request validation failed.", task=task_type.value) from exc
+
+
+def _temperature_range_for(
+    capabilities: list[ProviderCapability], model: str
+) -> TemperatureRange | None:
+    """Select a consistent temperature range for the requested model."""
+    ranges = {
+        capability.temperature
+        for capability in capabilities
+        if capability.temperature is not None and capability.model in {None, model}
+    }
+    if not ranges:
+        return None
+    if len(ranges) != 1:
+        raise ProviderResponseError(
+            "Provider returned conflicting temperature capabilities.", model=model
+        )
+    return next(iter(ranges))
+
+
+async def _next_stream_event(
+    stream: AsyncGenerator[StructuredStreamEvent, None],
+) -> StructuredStreamEvent:
+    """Return the next structured stream event as a coroutine for asyncio.Runner."""
+    return await anext(stream)
+
+
+async def _close_stream(stream: AsyncGenerator[StructuredStreamEvent, None]) -> None:
+    """Close a structured async stream after exhaustion or early consumer exit."""
+    await stream.aclose()
+
+
+def _safe_excerpt(content: str, limit: int = 200) -> str:
+    """Return a bounded single-line excerpt without control characters."""
+    return "".join(character if character.isprintable() else " " for character in content[:limit])
 
 
 def _web_extraction_prompt(
@@ -742,3 +1456,7 @@ def _web_extraction_prompt(
         content = content[: -(len(prompt) - maximum_characters)]
         prompt = build(content)
     return prompt, len(content) < len(page.text)
+
+
+async def _next_generic_event(stream: AsyncGenerator[StreamEvent, None]) -> StreamEvent:
+    return await anext(stream)

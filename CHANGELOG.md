@@ -4,6 +4,259 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [1.2.0rc2] - 2026-11-14
+
+### Changed
+
+- Synchronize the nine requested deliverables with the 14 public-facade live
+  probes and seven logprobs diagnostics on MLX-VLM 0.7.11.
+- Document Qwen reasoning-token measurement conventions, total output-cap scope,
+  and remaining Magistral, DeepSeek, identity and TracedCortexMux qualification gaps.
+- Package the updated review, migration/requalification guide and release records.
+  Runtime behavior and profile manifests are unchanged from 1.2.0rc1.
+
+## [1.2.0rc1] - 2026-11-14
+
+### Added
+
+- Prepare 1.2.0rc1 with versioned MLX/DeepSeek behavior profiles, exact deployment
+  bindings, explicit offline qualification mode, live attestation gates, portable
+  manifests and rules/fixture hashes. Keep existing structured facade interfaces.
+- Add a shared strict JSON/envelope pipeline, typed public diagnostics, bounded
+  opt-in private evidence, native reasoning controls and offline regression tests.
+- Document initial-request traceability, migration and live requalification in
+  `docs/behavior-review-1.2.0rc1.md` and `docs/behavior-profiles.md`.
+
+### Fixed
+
+- Bound completion and OpenAPI responses; retain partial HTTP evidence and avoid
+  decoding compressed replies twice. Reject unsupported sampling controls,
+  contradictory bindings, failed qualifications and reported budget overruns.
+
+
+- Accept local UTF-8 Markdown files as CLI prompts, embedding inputs, and
+  analysis instructions.
+- Add `response.to_markdown()` and CLI `--format markdown` (alias `md`), using
+  generated text, analysis reports, or fenced structured data as appropriate.
+
+## [1.1.0] - 2026-11-05
+
+### Added
+
+- Support independent `mlx_lm` and `mlx_vlm` text endpoints with separate
+  ports, model defaults, credentials, and routing identities.
+- Add an opt-in `mlx` provider for direct Mac Studio connections using a
+  configurable IP and port in `base_url`, explicit host approval, optional bearer
+  authentication, and non-streaming text, chat, and locally validated JSON output.
+
+## [1.0.0] - 2026-10-21
+
+### Added
+
+- Add optional `to_yaml()` exports on normalized responses and CLI
+  `--format text|json|yaml` selection, preserving `--json` and existing defaults.
+  YAML uses the existing `cortexmux[yaml]` extra and safe serialization of
+  JSON-compatible Pydantic values.
+
+### Changed
+
+- Promote the release-candidate series to stable version 1.0.0 and update
+  package maturity metadata and release documentation. Existing optional
+  provider prerequisites and integration limitations still apply.
+
+## [0.6.0rc10] - 2026-10-02
+
+### Fixed
+
+- Preserve DeepSeek's normalized token and cache usage in exception context
+  when a response is incomplete or its structured output fails validation.
+
+## [0.6.0rc9] - 2026-10-02
+
+### Added
+
+- Add an opt-in DeepSeek provider for text, chat, and locally verified JSON,
+  preserving cacheable message prefixes and exposing normalized cache-hit and
+  cache-miss token usage.
+- Add an opt-in Qwen Cloud provider for text, chat, and locally verified JSON
+  responses, with separate remote-host approval and model routing from Ollama.
+
+## [0.6.0rc8] - 2026-09-28
+
+### Fixed
+
+- Combine nested asynchronous context managers in the Codex streaming path so
+  Ruff's SIM117 check passes in CI without changing stream behavior.
+
+## [0.6.0rc7] - 2026-09-28
+
+### Added
+
+- Add a synthetic TypeSafe live probe that records exact prompts and normalized
+  responses in ignored local files for threshold review.
+- Add a separate TypeSafe contract probe for live Noul, Choice and Score input/output
+  verification and offline replay of saved prompt/response logs.
+
+## [0.6.0rc6] - 2026-09-26
+
+### Fixed
+
+- Keep sensitive numeric aggregates out of model prompts, bound time-series
+  resampling before allocation, and limit HTML table width and total cells.
+
+### Added
+
+- Opt-in TypeSafe Jev decision provider with typed Noul, Choice and Score
+  requests and probability responses, explicit remote-host approval and
+  network-free contract tests. Decision thresholds and follow-up actions remain
+  with the application.
+- Allow versioned Jev model IDs to reach TypeSafe even when model discovery
+  lists only aliases, so applications can pin a calibrated version.
+- Include the build backend in the development extra for offline, non-isolated builds.
+
+## [0.6.0rc5] - 2026-09-21
+
+### Added
+
+- Opt-in Grok provider using the xAI Responses API for text, chat and locally
+  validated JSON, with language model/alias discovery, typed sampling options,
+  bounded retries, explicit host approval, disabled response storage, and
+  offline transport/facade tests. No additional SDK is required.
+- Opt-in Google AI Studio Gemini provider for text generation, chat, and locally
+  validated JSON output, using the existing HTTP dependency. Includes paginated
+  model discovery, typed sampling options, token usage, bounded retries,
+  explicit remote-host approval, and offline transport/facade regression tests.
+
+## [0.6.0rc4] - 2026-09-21
+
+### Added
+
+- Typed per-model temperature capabilities and instance-scoped
+  `set_temperature()` defaults with provider/model range validation, explicit
+  request precedence, introspection, and clearing.
+- Opt-in asynchronous OpenAI Responses WebSocket sessions, initially for GPT-6
+  Astra, with application-owned function calls, mid-turn steering, and
+  cache-preserving reasoning updates.
+- Private offline Codex lab: typed synthetic/imported cases, local validation
+  reports, exact-output expectations and deterministic `codex-replay` provider.
+- `codex-lab init/add/list/validate` commands with no live network or process use.
+- Storage outside Git, restrictive file modes, bounded files, sanitized errors,
+  and Git/package exclusions for private case data and validation reports.
+
+## [0.6.0rc3] - 2026-09-10
+
+### Fixed
+
+- Codex startup isolation now accepts dedicated auth directories containing only
+  Codex plugin-cache artifacts (`plugins/cache`, `plugins/.remote-plugin-install-staging`)
+  while still rejecting unknown top-level plugin entries and non-empty personal
+  configuration files.
+- Plugin synchronization, loading, sharing, and dependency installation are
+  explicitly disabled. Cache trees reject symbolic links and special files, and
+  the auth directory is revalidated before every request.
+
+## [0.6.0rc2] - 2026-09-10
+
+### Fixed
+
+- Codex model discovery now includes hidden entries on every catalog page, so
+  reported models remain explicitly selectable regardless of picker visibility.
+- Model metadata preserves Codex display names, visibility, default selection
+  and default reasoning effort when supplied, without adding unreported models.
+
+## [0.6.0rc1] - 2026-09-10
+
+### Added
+
+- Opt-in `codex` subscription provider using local App Server stdio, with
+  managed ChatGPT/browser or device login, sanitized account state and limits.
+- Version-pinned CLI 0.140.0 protocol, bounded process lifecycle, correlated
+  notifications, cancellation, fresh contexts and explicit persistent threads.
+- Codex text/chat/JSON Schema generation, local JSON validation, streaming and
+  exact model/effort discovery without API-key fallback or inferred costs.
+- Generic sync/async facade streams and structured completion correlation metadata.
+- Offline fake-process regression coverage, opt-in live subscription test,
+  isolation documentation and release-only UniversRobot example.
+
+### Security
+
+- Dedicated auth directory, filtered process environment, restrictive settings,
+  no automatic approvals, no raw server diagnostics or token propagation.
+- Strict no-tool guarantee explicitly unsupported: requests require it by default
+  and fail closed unless the caller explicitly accepts sandbox limitations.
+
+### Fixed
+
+- Router streaming closes provider iterators when consumers stop early.
+
+## [0.5.2] - 2026-09-07
+
+### Added
+
+- Typed, preflight-validated OpenAI `service_tier`, reasoning effort, verbosity,
+  and output-token options, including explicit Standard/default processing.
+- Bounded OpenAI transient-error retries with exponential full-jitter backoff,
+  configurable limits, attempt metadata, provider request IDs, effective model
+  and tier metadata, and total provider-call duration.
+- Migration notes and precise documentation of the locally enforced JSON Schema
+  subset.
+
+### Changed
+
+- GPT-6 Astra defaults to `reasoning.effort: low` and accepts only `low`,
+  `medium`, `high`, `xhigh`, and `max`.
+- Per-request timeouts override the configured OpenAI provider timeout for each
+  attempt.
+
+### Fixed
+
+- Text and structured system instructions are sent through the Responses API
+  `instructions` field instead of being omitted.
+- JSON booleans no longer validate as `integer` or `number`, and unsupported
+  JSON Schema validation keywords are no longer silently ignored.
+
+## [0.5.1] - 2026-08-10
+
+### Changed
+
+- Structured model qualification now reports JSON syntax, schema conformance,
+  and expected-value accuracy separately; the example suite uses three
+  repetitions and an explicit deterministic trend definition.
+
+## [0.5.0] - 2026-08-10
+
+### Added
+
+- Opt-in, provider-independent CapitalForge MCP stdio client with MCP 2025
+  negotiation, bounded structured results, a five-tool read-only allowlist,
+  child-process cleanup, and native Ollama `qwen3:4b` tool-loop support.
+- Per-task model-profile options, with explicit request options taking
+  precedence, plus a memory-bounded `qwen3.6:27b` quality-profile example.
+- Provider-neutral model qualification with deterministic text/JSON cases,
+  machine and memory metadata, fast/balanced/quality scoring, and atomic
+  JSON or optional YAML recommendation manifests.
+- Explicit opt-in OpenAI Responses API provider with authenticated model
+  discovery and text, chat, and structured-output normalization.
+- `cortexmux models qualify` command and a mixed Ollama/GPT-5.6 example suite.
+
+### Changed
+
+- Example fast and vision routes now use `qwen3:4b` and
+  `ministral-3:8b`, removing the retired Llama 3.2 and Gemma 3 defaults.
+
+### Fixed
+
+- The `cortexmux chat` command now uses the facade's chat-message
+  normalization instead of constructing an invalid raw chat request.
+
+## [0.4.0] - 2026-08-01
+
+### Added
+
+- Typed synchronous and asynchronous structured-output streaming for Ollama,
+  with draft-only chunks, schema-validated completion events, usage metadata,
+  explicit interrupted-stream errors, and root-level `think` control.
+
 ## [0.3.0] - 2026-07-29
 
 ### Added

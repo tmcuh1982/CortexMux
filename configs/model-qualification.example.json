@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "repetitions": 3,
+  "minimum_quality": 1.0,
+  "cost_reference_usd": 0.01,
+  "candidates": [
+    {
+      "id": "ollama-qwen3-fast-8k",
+      "provider": "ollama",
+      "model": "qwen3:4b",
+      "profiles": ["fast", "balanced"],
+      "options": {"num_ctx": 8192, "num_predict": 512, "temperature": 0}
+    },
+    {
+      "id": "ollama-ministral-balanced-8k",
+      "provider": "ollama",
+      "model": "ministral-3:8b",
+      "profiles": ["balanced", "quality"],
+      "options": {"num_ctx": 8192, "num_predict": 512, "temperature": 0}
+    },
+    {
+      "id": "ollama-qwen36-quality-8k",
+      "provider": "ollama",
+      "model": "qwen3.6:27b",
+      "profiles": ["quality"],
+      "options": {"num_ctx": 8192, "num_predict": 512, "temperature": 0},
+      "estimated_memory_bytes": 21000000000
+    },
+    {
+      "id": "openai-luna-fast-none",
+      "provider": "openai",
+      "model": "gpt-5.6-luna",
+      "profiles": ["fast", "balanced"],
+      "options": {"reasoning_effort": "none", "max_output_tokens": 512},
+      "input_cost_per_million": 0.2,
+      "output_cost_per_million": 1.2
+    },
+    {
+      "id": "openai-terra-balanced-low",
+      "provider": "openai",
+      "model": "gpt-5.6-terra",
+      "profiles": ["balanced", "quality"],
+      "options": {"reasoning_effort": "low", "max_output_tokens": 512},
+      "input_cost_per_million": 2.0,
+      "output_cost_per_million": 12.0
+    },
+    {
+      "id": "openai-sol-quality-medium",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "profiles": ["quality"],
+      "options": {"reasoning_effort": "medium", "max_output_tokens": 512},
+      "input_cost_per_million": 5.0,
+      "output_cost_per_million": 30.0
+    }
+  ],
+  "cases": [
+    {
+      "id": "instruction-exacte",
+      "task": "chat",
+      "prompt": "Réponds avec exactement le mot OK, sans ponctuation ni explication.",
+      "validator": "exact_text",
+      "expected_text": "OK",
+      "weight": 1.0
+    },
+    {
+      "id": "calcul-structure",
+      "task": "structured_output",
+      "prompt": "À partir de [12.5, 17.5, 20], calcule le total, la moyenne arrondie à deux décimales et la tendance. La tendance vaut hausse si chaque valeur est strictement supérieure à la précédente, baisse si chaque valeur est strictement inférieure à la précédente, sinon stable.",
+      "validator": "exact_json",
+      "expected_json": {"total": 50.0, "moyenne": 16.67, "tendance": "hausse"},
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "total": {"type": "number"},
+          "moyenne": {"type": "number"},
+          "tendance": {"type": "string", "enum": ["hausse", "baisse", "stable"]}
+        },
+        "required": ["total", "moyenne", "tendance"],
+        "additionalProperties": false
+      },
+      "weight": 2.0
+    }
+  ]
+}

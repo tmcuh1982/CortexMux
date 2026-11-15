@@ -8,18 +8,30 @@
 
 CortexMux is a modular, local-first Python library for routing AI tasks across
 language models, vision models, ComfyUI image workflows, and deterministic
-data-analysis engines. Version 0.3.0 is an alpha-quality stable release: its public
-surface is tested, but production deployments should pin the patch version.
+data-analysis engines. Version 1.0.0 is the first major stable release.
+See the [release notes](docs/release-1.0.0.md) for features and validation.
 
 ## Features
 
 - Deterministic provider/model routing with no ambiguous fallback.
+- Deterministic cross-provider model qualification with machine-specific
+  JSON/YAML recommendation manifests.
 - Native Ollama text, chat, JSON, vision, embedding, and incremental streaming.
+- Explicit opt-in OpenAI Responses API text, chat, and structured output.
+- Explicit opt-in Qwen Cloud text, chat, and structured output with separate
+  model routes from local Ollama.
+- Explicit opt-in Gemini API text, chat, and validated JSON through Google AI Studio.
+- Explicit opt-in Grok text, chat, and validated JSON through the xAI API.
+- Explicit opt-in DeepSeek text, chat, and validated JSON with automatic
+  context-cache usage reporting.
+- Explicit opt-in TypeSafe Jev decisions with typed questions and probabilities.
+- Opt-in asynchronous OpenAI Responses sessions with function tools and live steering.
 - Native ComfyUI workflow catalogs, typed progress, binding, queueing, and safe downloads.
 - Safe Pandas analysis plus optional Polars and DuckDB loading.
 - Whitelisted analysis plans and bounded structured results.
 - Independent Decimal-based verification of structured AI calculation claims.
 - Opt-in bounded web-page text and table extraction with source provenance.
+- Opt-in read-only CapitalForge MCP context for native Ollama tool calls.
 - Typed Pydantic schemas, synchronous/asynchronous APIs, Typer CLI, and TOML/env config.
 - Loopback-only network policy by default.
 
@@ -40,12 +52,14 @@ the user.
 
 ```bash
 python -m pip install cortexmux
+python -m pip install "cortexmux[openai]"
 python -m pip install "cortexmux[data,visualization]"
 python -m pip install "cortexmux[all]"
 ```
 
-Extras are `comfyui`, `data`, `polars`, `duckdb`, `excel`, `visualization`,
-`all`, and `dev`. Optional packages are imported only when their feature is used.
+Extras are `openai`, `comfyui`, `data`, `polars`, `duckdb`, `excel`, `visualization`,
+`yaml`, `all`, and `dev`. Optional packages are imported only when their feature
+is used.
 
 ## Quick start
 
@@ -64,8 +78,72 @@ with CortexMux.from_env() as mux:
 Use `async with CortexMux.from_env()` and `await mux.achat(...)` in asynchronous
 programs. Calling a synchronous method from a running event loop is rejected.
 
+CapitalForge can remain a fully separate local application while Ollama reads
+its bounded portfolio context through MCP stdio. The integration is disabled by
+default and has no trading or configuration-write capability; see
+[CapitalForge MCP](docs/capitalforge-mcp.md).
+
 Structured output accepts `response_model=YourPydanticModel`. Vision accepts a
 path, bytes, or validated base64. Embeddings accept one string or a list.
+
+Connect directly to a Mac Studio MLX server with the opt-in `mlx` provider; see
+[MLX server configuration](docs/mlx.md) for IP, port, and host approval setup.
+
+Gemini uses `provider="gemini"` with the same `generate()`, `chat()` and
+`structured()` methods, including their asynchronous variants. It requires
+explicit activation, an approved Google endpoint, and `GEMINI_API_KEY`; see
+[Gemini setup](docs/gemini.md). No additional SDK is needed.
+
+Grok uses `provider="grok"` with the same methods. Enable it explicitly with
+an approved `api.x.ai` endpoint and `XAI_API_KEY`; see
+[Grok setup](docs/grok.md). Responses are requested with `store=false` and
+without server-side tools.
+
+OpenAI Responses requests keep system instructions separate from user input.
+For GPT-6 Astra, CortexMux defaults to `reasoning_effort="low"`; Standard
+processing can be selected explicitly with `service_tier="default"`:
+
+```python
+with CortexMux.from_env() as mux:
+    response = mux.generate(
+        "Summarize the supplied record.",
+        provider="openai",
+        model="gpt-6-astra",
+        system="Return only facts present in the record.",
+        service_tier="default",
+        timeout=30,
+    )
+```
+
+See [OpenAI provider behavior](docs/providers.md#openai-responses-api) and the
+[0.5.2 migration notes](docs/migration-0.5.2.md).
+
+For a conversation that can receive tool results and user corrections while it
+runs, use the asynchronous Responses session:
+
+```python
+import asyncio
+
+from cortexmux import CortexMux
+
+
+async def main() -> None:
+    async with CortexMux.from_env() as mux:
+        async with mux.openai_async_session(model="gpt-6-astra") as session:
+            await session.start("Draft a short plan.")
+            while True:
+                event = await session.next_event()
+                if event.response is not None:
+                    print(event.response.content)
+                    break
+
+
+asyncio.run(main())
+```
+
+OpenAI must be enabled with an approved endpoint and API key. See the
+[asynchronous session reference](docs/providers.md#asynchronous-openai-websocket-sessions)
+for parameters, tool results, steering, and reasoning updates.
 
 Ollama reasoning models such as Qwen3 can disable reasoning for reliable
 schema-constrained JSON. CortexMux sends `think` at the `/api/generate` payload
@@ -87,6 +165,55 @@ with CortexMux.from_env() as mux:
         think=False,
     )
 ```
+
+Structured output can also be streamed as an explicitly unvalidated draft. Do
+not parse or use `StructuredStreamChunk.content` as application data. CortexMux
+concatenates the fragments and emits `StructuredStreamCompleted` only after the
+complete JSON has passed parsing and JSON Schema validation:
+
+```python
+import asyncio
+import json
+
+from cortexmux import CortexMux
+from cortexmux.schemas import StructuredStreamChunk, StructuredStreamCompleted
+
+
+async def main() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["answer", "confidence"],
+    }
+    draft = ""
+
+    async with CortexMux.from_env() as mux:
+        async for event in mux.astream_structured(
+            prompt="Answer concisely and estimate confidence.",
+            json_schema=schema,
+            provider="ollama",
+            model="ministral-3:8b",
+            think=False,
+        ):
+            if isinstance(event, StructuredStreamChunk):
+                draft += event.content
+                print(f"\rDraft (unvalidated): {draft}", end="", flush=True)
+            elif isinstance(event, StructuredStreamCompleted):
+                print("\r" + " " * (len(draft) + 21), end="\r")
+                print("Validated:", json.dumps(event.parsed, ensure_ascii=False))
+
+
+asyncio.run(main())
+```
+
+For synchronous applications, iterate over `mux.stream_structured(...)` with
+the same event types. A premature stream end raises
+`StructuredStreamInterruptedError`; invalid final JSON or schema mismatch
+raises `StructuredOutputValidationError`. Existing `structured()` and
+`astructured()` calls remain non-streaming.
 
 ## ComfyUI
 
@@ -163,13 +290,27 @@ cortexmux version
 cortexmux doctor
 cortexmux providers
 cortexmux models list --provider ollama
+cortexmux models qualify \
+  --suite configs/model-qualification.example.json \
+  --output outputs/model-qualification.json
 cortexmux workflows list
 cortexmux chat --provider ollama --model my-model --prompt "Hello"
 cortexmux image generate --workflow text-to-image --prompt "A local workflow"
 cortexmux data analyze sales.csv --engine auto
 ```
 
-Commands that return structured values support `--json`.
+Commands that support `--json` also accept `--format text|json|yaml|markdown`.
+Use `--prompt-file prompt.md` to read a Markdown prompt:
+
+```bash
+cortexmux chat --model my-model --prompt-file prompt.md --format md > reply.md
+```
+
+Python responses expose `response.to_markdown()` and `response.to_yaml()`.
+Install `cortexmux[yaml]` for YAML. See [input files and output formats](docs/output-formats.md)
+for examples and compatibility details.
+See [model qualification](docs/model-qualification.md) for candidate-specific
+options, scoring, OpenAI opt-in, and portable manifests.
 
 ## End-to-end local demonstration
 
@@ -227,3 +368,10 @@ twine check dist/*
 
 See [CONTRIBUTING](CONTRIBUTING.md), [ROADMAP](ROADMAP.md), and
 [CHANGELOG](CHANGELOG.md). CortexMux is available under the [MIT License](LICENSE).
+
+## Codex subscription provider
+
+The opt-in `codex` provider supports ChatGPT-managed login, text/structured
+responses and account limits through local App Server stdio. See [Codex setup and limitations](docs/codex.md).
+
+For private response fixtures and offline replay, see [Codex local testing](docs/codex-local-testing.md).

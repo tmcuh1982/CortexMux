@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from time import perf_counter
 
+from cortexmux.core.capabilities import TemperatureSetting
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import ModelNotFoundError, ModelSelectionError, UnsupportedTaskError
 from cortexmux.core.registry import ProviderRegistry
@@ -12,7 +14,7 @@ from cortexmux.providers.base import BaseProvider
 from cortexmux.schemas.common import RoutingMetadata
 from cortexmux.schemas.progress import ProgressCallback
 from cortexmux.schemas.requests import CortexRequest
-from cortexmux.schemas.responses import CortexResponse
+from cortexmux.schemas.responses import CortexResponse, StreamEvent
 
 
 class Router:
@@ -21,6 +23,19 @@ class Router:
     def __init__(self, registry: ProviderRegistry, config: CortexMuxConfig) -> None:
         self.registry = registry
         self.config = config
+        self._model_temperatures: dict[tuple[str, str], TemperatureSetting] = {}
+
+    def set_temperature(self, setting: TemperatureSetting) -> None:
+        """Set a validated instance-level default for one provider/model pair."""
+        self._model_temperatures[(setting.provider, setting.model)] = setting
+
+    def clear_temperature(self, *, provider: str, model: str) -> None:
+        """Remove an instance-level temperature default when one exists."""
+        self._model_temperatures.pop((provider, model), None)
+
+    def temperature_setting(self, *, provider: str, model: str) -> TemperatureSetting | None:
+        """Return the configured instance-level temperature default, if any."""
+        return self._model_temperatures.get((provider, model))
 
     def select(self, request: CortexRequest) -> tuple[BaseProvider, str | None, str]:
         """Select exactly one provider/model and return an auditable reason."""
@@ -93,7 +108,7 @@ class Router:
         started_clock = perf_counter()
         provider, model, reason = self.select(request)
         await self._ensure_model_is_available(provider, model, request)
-        selected_request = request.model_copy(update={"provider": provider.name, "model": model})
+        selected_request = self._selected_request(request, provider, model, reason)
         if on_progress is None:
             response = await provider.execute(selected_request)
         else:
@@ -112,6 +127,43 @@ class Router:
             request_id=request.request_id,
         )
         return response
+
+    async def stream(self, request: CortexRequest) -> AsyncGenerator[StreamEvent, None]:
+        """Select a provider/model and stream a normalized request."""
+        provider, model, reason = self.select(request)
+        await self._ensure_model_is_available(provider, model, request)
+        selected_request = self._selected_request(request, provider, model, reason)
+        stream = provider.stream(selected_request)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
+
+    def _selected_request(
+        self,
+        request: CortexRequest,
+        provider: BaseProvider,
+        model: str | None,
+        reason: str,
+    ) -> CortexRequest:
+        """Merge profile and model defaults without overriding explicit request options."""
+        options: dict[str, str | int | float | bool | list[str]] = {}
+        if reason == "configured_model_profile":
+            profile = self.config.routing.profile_for(request.model_profile)
+            route = profile.route_for(request.task) if profile is not None else None
+            if route is not None:
+                options.update(route.options)
+        if model is not None and "temperature" not in request.options:
+            setting = self.temperature_setting(provider=provider.name, model=model)
+            if setting is not None:
+                options["temperature"] = setting.value
+        options.update(request.options)
+        return request.model_copy(
+            update={"provider": provider.name, "model": model, "options": options}
+        )
 
     @staticmethod
     def _ensure_support(provider: BaseProvider, request: CortexRequest, model: str | None) -> None:
@@ -135,7 +187,7 @@ class Router:
             return
         installed = await provider.list_models()
         installed_names = {item.name for item in installed}
-        if model not in installed_names:
+        if model not in installed_names and not provider.accepts_unlisted_model(model):
             raise ModelNotFoundError(
                 "The selected model is not installed for this provider.",
                 provider=provider.name,

@@ -11,8 +11,11 @@ from typing import Any
 from platformdirs import user_config_dir
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from cortexmux.behavior import BehaviorBinding
 from cortexmux.core.exceptions import ConfigurationError
 from cortexmux.core.types import TaskType
+from cortexmux.mcp.schemas import MCPServerConfig
+from cortexmux.providers.codex.schemas import CodexConfig
 
 
 class CoreConfig(BaseModel):
@@ -50,6 +53,140 @@ class OllamaConfig(BaseModel):
     defaults: OllamaDefaults = Field(default_factory=OllamaDefaults)
 
 
+class OpenAIConfig(BaseModel):
+    """Explicit opt-in OpenAI Responses API configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://api.openai.com/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_base_delay_seconds: float = Field(default=0.25, ge=0, le=60)
+    retry_max_delay_seconds: float = Field(default=2, ge=0, le=60)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
+    defaults: OllamaDefaults = Field(default_factory=OllamaDefaults)
+
+
+class GeminiDefaults(BaseModel):
+    """Explicit model IDs for the Gemini text tasks implemented by CortexMux."""
+
+    chat: str | None = None
+    text_generation: str | None = None
+    structured_output: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def empty_is_unset(cls, value: object) -> object:
+        """Treat empty strings as an absent model default."""
+        return None if value == "" else value
+
+
+class GeminiConfig(BaseModel):
+    """Explicit opt-in Google AI Studio Gemini API configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    timeout_seconds: float = Field(default=120, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_base_delay_seconds: float = Field(default=0.25, ge=0, le=60)
+    retry_max_delay_seconds: float = Field(default=2, ge=0, le=60)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="GEMINI_API_KEY", min_length=1)
+    defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
+
+
+class GrokDefaults(BaseModel):
+    """Explicit model IDs for the Grok text tasks implemented by CortexMux."""
+
+    chat: str | None = None
+    text_generation: str | None = None
+    structured_output: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def empty_is_unset(cls, value: object) -> object:
+        """Treat empty strings as an absent model default."""
+        return None if value == "" else value
+
+
+class GrokConfig(BaseModel):
+    """Explicit opt-in xAI API configuration for Grok."""
+
+    enabled: bool = False
+    base_url: str = "https://api.x.ai/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_base_delay_seconds: float = Field(default=0.25, ge=0, le=60)
+    retry_max_delay_seconds: float = Field(default=2, ge=0, le=60)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="XAI_API_KEY", min_length=1)
+    defaults: GrokDefaults = Field(default_factory=GrokDefaults)
+
+
+class DeepSeekDefaults(BaseModel):
+    """Explicit model IDs for DeepSeek text tasks."""
+
+    chat: str | None = None
+    text_generation: str | None = None
+    structured_output: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def empty_is_unset(cls, value: object) -> object:
+        """Treat empty strings as an absent model default."""
+        return None if value == "" else value
+
+
+class DeepSeekConfig(BaseModel):
+    """Explicit opt-in DeepSeek Chat Completions configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://api.deepseek.com"
+    timeout_seconds: float = Field(default=120, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="DEEPSEEK_API_KEY", min_length=1)
+    defaults: DeepSeekDefaults = Field(default_factory=DeepSeekDefaults)
+    server_version: str | None = None
+    behavior_profiles: dict[str, BehaviorBinding] = Field(default_factory=dict, repr=False)
+
+
+class QwenCloudConfig(BaseModel):
+    """Explicit opt-in Qwen Cloud Chat Completions configuration."""
+
+    enabled: bool = False
+    base_url: str = "https://maas.qwencloudapi.com/compatible-mode/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="DASHSCOPE_API_KEY", min_length=1)
+    defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
+
+
+class MLXConfig(BaseModel):
+    """Opt-in MLX server configuration; base_url includes the host IP and port."""
+
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:8080/v1"
+    timeout_seconds: float = Field(default=120, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="MLX_API_KEY", min_length=1)
+    defaults: GeminiDefaults = Field(default_factory=GeminiDefaults)
+
+    server_version: str | None = None
+    check_openapi_version: bool = False
+    behavior_profiles: dict[str, BehaviorBinding] = Field(default_factory=dict, repr=False)
+
+
+class TypeSafeConfig(BaseModel):
+    """Explicit opt-in configuration for TypeSafe decision models."""
+
+    enabled: bool = False
+    base_url: str = "https://api.typesafe.ai"
+    timeout_seconds: float = Field(default=15, gt=0)
+    api_key: SecretStr | None = Field(default=None, repr=False)
+    api_key_env: str = Field(default="TYPESAFE_API_KEY", min_length=1)
+    default_model: str = Field(default="jev-latest", min_length=1)
+
+
 class ComfyUIConfig(BaseModel):
     """ComfyUI endpoint and workflow configuration."""
 
@@ -68,10 +205,37 @@ class ComfyUIConfig(BaseModel):
         return None if value == "" else value
 
 
+class CapitalForgeMCPConfig(MCPServerConfig):
+    """Opt-in configuration for CapitalForge's local read-only MCP process."""
+
+    @model_validator(mode="after")
+    def enabled_server_requires_command(self) -> CapitalForgeMCPConfig:
+        """Require an explicit executable when the integration is enabled."""
+        if self.enabled and self.command is None:
+            raise ValueError("mcp.capitalforge.command is required when enabled")
+        return self
+
+
+class MCPConfig(BaseModel):
+    """Local MCP integrations kept independent from individual providers."""
+
+    capitalforge: CapitalForgeMCPConfig = Field(default_factory=CapitalForgeMCPConfig)
+
+
 class ProvidersConfig(BaseModel):
     """Built-in provider configurations."""
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    gemini: GeminiConfig = Field(default_factory=GeminiConfig)
+    grok: GrokConfig = Field(default_factory=GrokConfig)
+    deepseek: DeepSeekConfig = Field(default_factory=DeepSeekConfig)
+    qwencloud: QwenCloudConfig = Field(default_factory=QwenCloudConfig)
+    mlx: MLXConfig = Field(default_factory=MLXConfig)
+    mlx_lm: MLXConfig = Field(default_factory=MLXConfig)
+    mlx_vlm: MLXConfig = Field(default_factory=MLXConfig)
+    typesafe: TypeSafeConfig = Field(default_factory=TypeSafeConfig)
+    codex: CodexConfig = Field(default_factory=CodexConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
 
 
@@ -85,6 +249,7 @@ class RoutingDefaults(BaseModel):
     embedding_provider: str | None = "ollama"
     image_generation_provider: str | None = "comfyui"
     data_analysis_provider: str | None = "data"
+    decision_provider: str | None = None
 
     def provider_for(self, task: TaskType) -> str | None:
         """Return the configured provider for a task."""
@@ -98,6 +263,7 @@ class TaskModelRoute(BaseModel):
 
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
+    options: dict[str, str | int | float | bool | list[str]] = Field(default_factory=dict)
 
 
 class ModelProfile(BaseModel):
@@ -110,6 +276,7 @@ class ModelProfile(BaseModel):
     structured_output: TaskModelRoute | None = None
     vision: TaskModelRoute | None = None
     embedding: TaskModelRoute | None = None
+    decision: TaskModelRoute | None = None
 
     def route_for(self, task: TaskType) -> TaskModelRoute | None:
         """Return the configured route for a model-backed task."""
@@ -177,6 +344,8 @@ class WebConfig(BaseModel):
     max_redirects: int = Field(default=3, ge=0, le=10)
     max_tables: int = Field(default=20, ge=0, le=100)
     max_table_rows: int = Field(default=1_000, ge=0, le=10_000)
+    max_table_columns: int = Field(default=256, gt=0, le=10_000)
+    max_table_cells: int = Field(default=100_000, gt=0, le=1_000_000)
     user_agent: str = Field(default="CortexMux-web-extraction/1", min_length=1)
 
     @field_validator("allowed_hosts", mode="before")
@@ -196,12 +365,26 @@ class CortexMuxConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
     config_path: Path | None = Field(default=None, exclude=True)
 
     def model_for(self, task: TaskType, provider: str) -> str | None:
         """Return a provider's configured default model for a task."""
-        if provider == "ollama" and hasattr(self.providers.ollama.defaults, task.value):
-            value = getattr(self.providers.ollama.defaults, task.value)
+        if provider == "typesafe" and task == TaskType.DECISION:
+            return self.providers.typesafe.default_model
+        if provider in {
+            "ollama",
+            "openai",
+            "gemini",
+            "grok",
+            "deepseek",
+            "qwencloud",
+            "mlx",
+            "mlx_lm",
+            "mlx_vlm",
+        }:
+            defaults = getattr(self.providers, provider).defaults
+            value = getattr(defaults, task.value, None)
             return value if isinstance(value, str) else None
         return None
 
@@ -256,6 +439,24 @@ def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:
 def _environment_values(env: dict[str, str]) -> dict[str, Any]:
     mapping: dict[str, tuple[str, ...]] = {
         "CORTEXMUX_OLLAMA_BASE_URL": ("providers", "ollama", "base_url"),
+        "CORTEXMUX_OPENAI_BASE_URL": ("providers", "openai", "base_url"),
+        "CORTEXMUX_OPENAI_ENABLED": ("providers", "openai", "enabled"),
+        "CORTEXMUX_GEMINI_BASE_URL": ("providers", "gemini", "base_url"),
+        "CORTEXMUX_GEMINI_ENABLED": ("providers", "gemini", "enabled"),
+        "CORTEXMUX_GROK_BASE_URL": ("providers", "grok", "base_url"),
+        "CORTEXMUX_GROK_ENABLED": ("providers", "grok", "enabled"),
+        "CORTEXMUX_DEEPSEEK_BASE_URL": ("providers", "deepseek", "base_url"),
+        "CORTEXMUX_DEEPSEEK_ENABLED": ("providers", "deepseek", "enabled"),
+        "CORTEXMUX_QWENCLOUD_BASE_URL": ("providers", "qwencloud", "base_url"),
+        "CORTEXMUX_QWENCLOUD_ENABLED": ("providers", "qwencloud", "enabled"),
+        "CORTEXMUX_MLX_BASE_URL": ("providers", "mlx", "base_url"),
+        "CORTEXMUX_MLX_ENABLED": ("providers", "mlx", "enabled"),
+        "CORTEXMUX_MLX_LM_BASE_URL": ("providers", "mlx_lm", "base_url"),
+        "CORTEXMUX_MLX_LM_ENABLED": ("providers", "mlx_lm", "enabled"),
+        "CORTEXMUX_MLX_VLM_BASE_URL": ("providers", "mlx_vlm", "base_url"),
+        "CORTEXMUX_MLX_VLM_ENABLED": ("providers", "mlx_vlm", "enabled"),
+        "CORTEXMUX_TYPESAFE_BASE_URL": ("providers", "typesafe", "base_url"),
+        "CORTEXMUX_TYPESAFE_ENABLED": ("providers", "typesafe", "enabled"),
         "CORTEXMUX_COMFYUI_BASE_URL": ("providers", "comfyui", "base_url"),
         "CORTEXMUX_OUTPUT_DIR": ("core", "output_dir"),
         "CORTEXMUX_ALLOW_REMOTE_HOSTS": ("core", "allow_remote_hosts"),
@@ -281,6 +482,15 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
             "CORTEXMUX_ALLOW_REMOTE_HOSTS",
             "CORTEXMUX_WEB_ENABLED",
             "CORTEXMUX_WEB_ALLOW_PRIVATE_HOSTS",
+            "CORTEXMUX_OPENAI_ENABLED",
+            "CORTEXMUX_GEMINI_ENABLED",
+            "CORTEXMUX_GROK_ENABLED",
+            "CORTEXMUX_DEEPSEEK_ENABLED",
+            "CORTEXMUX_QWENCLOUD_ENABLED",
+            "CORTEXMUX_TYPESAFE_ENABLED",
+            "CORTEXMUX_MLX_ENABLED",
+            "CORTEXMUX_MLX_LM_ENABLED",
+            "CORTEXMUX_MLX_VLM_ENABLED",
         }:
             value = value.lower() in {"1", "true", "yes", "on"}
         cursor = result
