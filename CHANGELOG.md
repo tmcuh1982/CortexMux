@@ -4,6 +4,12 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Add opt-in exact scalar temperature and speed conversions and comparisons,
+  versioned proof, decimal or rational display, and private measurement audit
+  for explicitly enriched structured calls. See `docs/exact-measurements.md`.
+
 ## [1.2.0rc2] - 2026-11-14
 
 ### Changed

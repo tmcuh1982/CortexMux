@@ -86,6 +86,9 @@ default and has no trading or configuration-write capability; see
 Structured output accepts `response_model=YourPydanticModel`. Vision accepts a
 path, bytes, or validated base64. Embeddings accept one string or a list.
 
+Use [exact scalar measurements](docs/exact-measurements.md) for local unit
+conversion and comparison or explicit numerical evidence in structured calls.
+
 Connect directly to a Mac Studio MLX server with the opt-in `mlx` provider; see
 [MLX server configuration](docs/mlx.md) for IP, port, and host approval setup.
 

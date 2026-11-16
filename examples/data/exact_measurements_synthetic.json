@@ -1,0 +1,258 @@
+[
+  {
+    "id": "minus15-storage",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "absolute_temperature",
+        "value": "-15",
+        "unit": "°C"
+      },
+      "right": {
+        "quantity_kind": "absolute_temperature",
+        "value": "5",
+        "unit": "°F"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "-15 °C",
+        "quote_original": "Orme B9 supporte une température minimale de stockage de -15 °C."
+      },
+      "right": {
+        "value_original": "5 °F",
+        "quote_original": "Orme B9 a une température minimale de stockage de 5 °F."
+      }
+    },
+    "expected_status": "equal",
+    "expected_display": {
+      "left": "258.15",
+      "right": "258.15"
+    },
+    "expected_business_same_fact": true
+  },
+  {
+    "id": "minus25-storage",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "absolute_temperature",
+        "value": "-25",
+        "unit": "°C"
+      },
+      "right": {
+        "quantity_kind": "absolute_temperature",
+        "value": "-13",
+        "unit": "°F"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "-25 °C",
+        "quote_original": "Orme B9 peut être stocké à partir de -25 °C."
+      },
+      "right": {
+        "value_original": "-13 °F",
+        "quote_original": "La température minimale de stockage de l’Orme B9 est de -13 °F."
+      }
+    },
+    "expected_status": "equal",
+    "expected_display": {
+      "left": "248.15",
+      "right": "248.15"
+    },
+    "expected_business_same_fact": true
+  },
+  {
+    "id": "speed-equal",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "linear_speed",
+        "value": "2",
+        "unit": "m/s"
+      },
+      "right": {
+        "quantity_kind": "linear_speed",
+        "value": "7.2",
+        "unit": "km/h"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "2 m/s",
+        "quote_original": "La vitesse maximale de l’Orme B9 est de 2 m/s."
+      },
+      "right": {
+        "value_original": "7.2 km/h",
+        "quote_original": "L’Orme B9 atteint au maximum 7.2 km/h."
+      }
+    },
+    "expected_status": "equal",
+    "expected_display": {
+      "left": "2",
+      "right": "2"
+    },
+    "expected_business_same_fact": true
+  },
+  {
+    "id": "difference-speed",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "linear_speed",
+        "value": "2",
+        "unit": "m/s"
+      },
+      "right": {
+        "quantity_kind": "linear_speed",
+        "value": "7.3",
+        "unit": "km/h"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "2 m/s",
+        "quote_original": "La vitesse maximale de l’Orme B9 est de 2 m/s."
+      },
+      "right": {
+        "value_original": "7.3 km/h",
+        "quote_original": "L’Orme B9 atteint au maximum 7.3 km/h."
+      }
+    },
+    "expected_status": "different",
+    "expected_display": {
+      "left": "2",
+      "right": "73/36"
+    },
+    "expected_business_same_fact": false
+  },
+  {
+    "id": "difference-temperature",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "absolute_temperature",
+        "value": "-15",
+        "unit": "°C"
+      },
+      "right": {
+        "quantity_kind": "absolute_temperature",
+        "value": "5.18",
+        "unit": "°F"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "-15 °C",
+        "quote_original": "Orme B9 peut être stocké à partir de -15 °C."
+      },
+      "right": {
+        "value_original": "5.18 °F",
+        "quote_original": "Orme B9 peut être stocké à partir de 5.18 °F."
+      }
+    },
+    "expected_status": "different",
+    "expected_display": {
+      "left": "258.15",
+      "right": "258.25"
+    },
+    "expected_business_same_fact": false
+  },
+  {
+    "id": "operation-vs-storage",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "absolute_temperature",
+        "value": "-15",
+        "unit": "°C"
+      },
+      "right": {
+        "quantity_kind": "absolute_temperature",
+        "value": "5",
+        "unit": "°F"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "-15 °C",
+        "quote_original": "La température minimale de fonctionnement de l’Orme B9 est de -15 °C."
+      },
+      "right": {
+        "value_original": "5 °F",
+        "quote_original": "La température minimale de stockage de l’Orme B9 est de 5 °F."
+      }
+    },
+    "expected_status": "equal",
+    "expected_display": {
+      "left": "258.15",
+      "right": "258.15"
+    },
+    "expected_business_same_fact": false
+  },
+  {
+    "id": "min-vs-max",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "absolute_temperature",
+        "value": "-15",
+        "unit": "°C"
+      },
+      "right": {
+        "quantity_kind": "absolute_temperature",
+        "value": "5",
+        "unit": "°F"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "-15 °C",
+        "quote_original": "La température minimale de stockage de l’Orme B9 est de -15 °C."
+      },
+      "right": {
+        "value_original": "5 °F",
+        "quote_original": "La température maximale de stockage de l’Orme B9 est de 5 °F."
+      }
+    },
+    "expected_status": "equal",
+    "expected_display": {
+      "left": "258.15",
+      "right": "258.15"
+    },
+    "expected_business_same_fact": false
+  },
+  {
+    "id": "base-vs-plus",
+    "is_synthetic": true,
+    "comparison": {
+      "left": {
+        "quantity_kind": "absolute_temperature",
+        "value": "-15",
+        "unit": "°C"
+      },
+      "right": {
+        "quantity_kind": "absolute_temperature",
+        "value": "5",
+        "unit": "°F"
+      }
+    },
+    "facts": {
+      "left": {
+        "value_original": "-15 °C",
+        "quote_original": "La température minimale de stockage de l’Orme B9 est de -15 °C."
+      },
+      "right": {
+        "value_original": "5 °F",
+        "quote_original": "La température minimale de stockage de l’Orme B9 Plus est de 5 °F."
+      }
+    },
+    "expected_status": "equal",
+    "expected_display": {
+      "left": "258.15",
+      "right": "258.15"
+    },
+    "expected_business_same_fact": false
+  }
+]

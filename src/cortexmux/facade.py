@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Iterator
@@ -17,7 +18,9 @@ from cortexmux.core.capabilities import ProviderCapability, TemperatureRange, Te
 from cortexmux.core.config import CortexMuxConfig
 from cortexmux.core.exceptions import (
     ConfigurationError,
+    CortexMuxError,
     InvalidRequestError,
+    MeasurementCalculationError,
     ProviderResponseError,
     StructuredOutputValidationError,
 )
@@ -26,6 +29,11 @@ from cortexmux.core.router import Router
 from cortexmux.core.security import validate_provider_url
 from cortexmux.core.types import MessageRole, TaskType
 from cortexmux.mcp import MCPStdioClient
+from cortexmux.measurements import (
+    MeasurementContext,
+    MeasurementProvenance,
+    compare_measurements,
+)
 from cortexmux.providers.base import BaseProvider
 from cortexmux.providers.codex import CodexClient, CodexProvider
 from cortexmux.providers.codex.schemas import (
@@ -812,40 +820,63 @@ class CortexMux:
         system: str | None = None,
         think: bool | None = None,
         timeout: float | None = None,
+        measurement_context: MeasurementContext | None = None,
         **options: Any,
     ) -> StructuredResponse:
-        """Generate and validate structured JSON asynchronously."""
+        """Generate structured JSON with optional exact measurement context."""
         schema = response_model.model_json_schema() if response_model else json_schema
-        response = cast(
-            StructuredResponse,
-            await self.arun(
-                StructuredOutputRequest(
-                    prompt=prompt,
-                    provider=provider,
-                    model=model,
-                    model_profile=model_profile,
-                    json_schema=schema,
-                    system=system,
-                    think=think,
-                    timeout=timeout,
-                    options=options,
-                )
-            ),
+        request = StructuredOutputRequest(
+            prompt=prompt,
+            provider=provider,
+            model=model,
+            model_profile=model_profile,
+            json_schema=schema,
+            system=system,
+            think=think,
+            timeout=timeout,
+            options=options,
         )
-        if response_model:
-            try:
-                response.parsed = response_model.model_validate(response.parsed)
-            except ValidationError:
-                diagnostic = dict((response.raw_metadata or {}).get("behavior", {}))
-                diagnostic["category"] = "schema"
-                error = StructuredOutputValidationError(
-                    "Structured output does not match the response model.",
-                    provider=response.provider,
-                    request_id=response.request_id,
-                    behavior=diagnostic,
-                )
-                error._private_audit = response.private_audit
-                raise error from None
+        measurement_trace = measurement_proof = None
+        if measurement_context is not None:
+            enriched, measurement_trace, measurement_proof = _measurement_prompt(
+                request, measurement_context
+            )
+            request = request.model_copy(update={"prompt": enriched})
+        try:
+            response = cast(StructuredResponse, await self.arun(request))
+            if response_model:
+                try:
+                    response.parsed = response_model.model_validate(response.parsed)
+                except ValidationError:
+                    diagnostic = dict((response.raw_metadata or {}).get("behavior", {}))
+                    diagnostic["category"] = "schema"
+                    error = StructuredOutputValidationError(
+                        "Structured output does not match the response model.",
+                        provider=response.provider,
+                        request_id=response.request_id,
+                        behavior=diagnostic,
+                    )
+                    error._private_audit = response.private_audit
+                    raise error from None
+        except CortexMuxError as error:
+            if measurement_trace is not None:
+                error.context["measurement"] = measurement_trace
+            if measurement_proof is not None:
+                error._private_audit = {
+                    **(error.private_audit or {}),
+                    "measurement": measurement_proof,
+                }
+            raise
+        if measurement_trace is not None:
+            response.raw_metadata = {
+                **(response.raw_metadata or {}),
+                "measurement": measurement_trace,
+            }
+        if measurement_proof is not None:
+            response._private_audit = {
+                **(response.private_audit or {}),
+                "measurement": measurement_proof,
+            }
         return response
 
     def structured(
@@ -860,9 +891,10 @@ class CortexMux:
         system: str | None = None,
         think: bool | None = None,
         timeout: float | None = None,
+        measurement_context: MeasurementContext | None = None,
         **options: Any,
     ) -> StructuredResponse:
-        """Generate and validate structured JSON synchronously."""
+        """Generate structured JSON synchronously with optional measurement context."""
         return self._sync(
             self.astructured(
                 prompt,
@@ -874,6 +906,7 @@ class CortexMux:
                 system=system,
                 think=think,
                 timeout=timeout,
+                measurement_context=measurement_context,
                 **options,
             )
         )
@@ -1365,6 +1398,62 @@ class CortexMux:
     ) -> None:
         """Close resources after a synchronous context."""
         self.close()
+
+
+def _measurement_prompt(
+    request: StructuredOutputRequest, context: MeasurementContext
+) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
+    trace: dict[str, Any] = {"provenance": MeasurementProvenance().model_dump(mode="json")}
+    try:
+        context = MeasurementContext.model_validate(context)
+    except ValidationError:
+        raise InvalidRequestError(
+            "Invalid measurement context.",
+            request_id=request.request_id,
+            measurement={**trace, "status": "invalid_context"},
+        ) from None
+    try:
+        result = compare_measurements(context.comparison, presentation=context.presentation)
+        trace.update(
+            contract=result.contract,
+            status=result.status,
+            tolerance_applied=result.tolerance_applied,
+            presentation=context.presentation.model_dump(mode="json"),
+            formats={
+                side: proof.display.format
+                for side, proof in (("left", result.left), ("right", result.right))
+                if proof is not None
+            },
+        )
+        disclosure: dict[str, Any] = {
+            "contract": result.contract,
+            "status": result.status,
+            "tolerance_applied": result.tolerance_applied,
+        }
+        if result.issue is not None:
+            disclosure["issue"] = trace["issue"] = result.issue.model_dump(mode="json")
+        if result.left is not None and result.right is not None:
+            disclosure.update(
+                quantity_kind=result.quantity_kind,
+                canonical_unit=result.canonical_unit,
+                left=result.left.display.model_dump(mode="json"),
+                right=result.right.display.model_dump(mode="json"),
+            )
+        prompt = (
+            request.prompt + "\n\nNumerical evidence for the supplied left and right operands. "
+            "Numerical equality alone does not establish that the facts are the same.\n"
+            + json.dumps(disclosure, separators=(",", ":"), sort_keys=True)
+        )
+        trace["enriched_prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        proof = result.model_dump(mode="json") if context.capture_private else None
+    except Exception:
+        # A failed preparation must never send an unchecked or unenriched prompt.
+        raise MeasurementCalculationError(
+            "Could not prepare exact measurement context.",
+            request_id=request.request_id,
+            measurement={**trace, "status": "preparation_error"},
+        ) from None
+    return prompt, trace, proof
 
 
 def _request_for(task: TaskType | str, fields: dict[str, Any]) -> CortexRequest:
