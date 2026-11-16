@@ -31,3 +31,11 @@ Visa market data, does not follow an exchange holiday calendar, and must not be
 used for financial decisions. Dates include weekdays only. `sma_50` and
 `sma_200` are simple arithmetic means of the current and preceding 49 or 199
 `close_usd` observations; cells remain empty until a complete window exists.
+
+## Exact scalar measurement fixtures
+
+`exact_measurements_synthetic.json` contains eight invented cases, each marked
+`is_synthetic: true`. Stable references include `−15 °C = 5 °F` at `258.15 K`,
+`−25 °C = −13 °F` at `248.15 K`, and `7.3 km/h` at `73/36 m/s`. Three
+cases pin exact equality alongside distinct business facts. Use
+`examples/exact_measurements.py` to verify both numerical presentations offline.

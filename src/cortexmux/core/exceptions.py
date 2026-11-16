@@ -91,6 +91,10 @@ class DataAnalysisError(CortexMuxError):
     """A deterministic data operation failed."""
 
 
+class MeasurementCalculationError(CortexMuxError):
+    """An exact measurement context could not be prepared."""
+
+
 class WebFetchError(CortexMuxError):
     """A web page could not be retrieved or decoded safely."""
 

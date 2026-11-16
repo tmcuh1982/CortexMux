@@ -6,9 +6,17 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from cortexmux.core.exceptions import InvalidRequestError
+from cortexmux.measurements import MeasurementPresentation
 
 
 class ContractModel(BaseModel):
@@ -40,6 +48,16 @@ class BehaviorRules(ContractModel):
     reasoning_budget: bool = False
     sampling: tuple[Literal["temperature", "top_p"], ...] = ()
     output_cap_scope: Literal["unknown", "answer", "reasoning_and_answer"] = "unknown"
+
+    measurement_presentation: MeasurementPresentation | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_rules(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Preserve the canonical export and fingerprints of existing manifests."""
+        data: dict[str, Any] = handler(self)
+        if self.measurement_presentation is None:
+            data.pop("measurement_presentation", None)
+        return data
 
     @model_validator(mode="after")
     def coherent_budget(self) -> BehaviorRules:
