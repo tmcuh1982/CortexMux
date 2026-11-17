@@ -10,6 +10,10 @@ All notable changes follow Keep a Changelog conventions.
   versioned proof, decimal or rational display, and private measurement audit
   for explicitly enriched structured calls. See `docs/exact-measurements.md`.
 
+- Add the opt-in oMLX structured route and bundled Qwen 3.8 27B 4-bit and
+  Gemma 4 31B 4-bit behavior profiles for reasoning-disabled calls.
+  See `docs/omlx.md`.
+
 ## [1.2.0rc2] - 2026-11-14
 
 ### Changed

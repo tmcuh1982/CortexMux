@@ -164,6 +164,8 @@ async def execute_behavior(
             raise InvalidRequestError("Behavior profile requires max_tokens.")
         if request.think is not None and profile.rules.reasoning == "unsupported":
             raise UnsupportedTaskError("Reasoning controls are not supported by this profile.")
+        if provider == "omlx" and request.think is not False:
+            raise UnsupportedTaskError("oMLX requires explicit think=False.")
         if options.thinking_budget is not None and (
             not profile.rules.reasoning_budget or request.think is not True
         ):
@@ -200,6 +202,8 @@ async def execute_behavior(
         if request.think is not None:
             if profile.rules.reasoning == "mlx":
                 controls["enable_thinking"] = request.think
+            elif profile.rules.reasoning == "omlx":
+                controls["chat_template_kwargs"] = {"enable_thinking": request.think}
             else:
                 controls["thinking"] = {"type": "enabled" if request.think else "disabled"}
         if options.thinking_budget is not None:
@@ -281,6 +285,17 @@ async def execute_behavior(
             or not isinstance(message.get("content"), str)
         ):
             raise ProviderResponseError("Response has no valid assistant text.")
+        if provider == "omlx" and (
+            message.get("reasoning_content")
+            or message.get("reasoning")
+            or (diagnostic.reasoning_tokens or 0) > 0
+            or any(
+                marker in message["content"].lower()
+                for marker in ("<think>", "[think]", "<|channel>thought")
+            )
+        ):
+            diagnostic.category = "reasoning"
+            raise ProviderResponseError("oMLX returned reasoning for a reasoning-disabled call.")
         diagnostic.category = "syntax"
         try:
             normalized, transforms = normalize_envelope(

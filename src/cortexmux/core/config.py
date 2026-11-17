@@ -176,6 +176,13 @@ class MLXConfig(BaseModel):
     behavior_profiles: dict[str, BehaviorBinding] = Field(default_factory=dict, repr=False)
 
 
+class OMLXConfig(MLXConfig):
+    """Opt-in oMLX server and structured profile bindings."""
+
+    base_url: str = "http://127.0.0.1:8000/v1"
+    api_key_env: str = Field(default="OMLX_API_KEY", min_length=1)
+
+
 class TypeSafeConfig(BaseModel):
     """Explicit opt-in configuration for TypeSafe decision models."""
 
@@ -234,6 +241,7 @@ class ProvidersConfig(BaseModel):
     mlx: MLXConfig = Field(default_factory=MLXConfig)
     mlx_lm: MLXConfig = Field(default_factory=MLXConfig)
     mlx_vlm: MLXConfig = Field(default_factory=MLXConfig)
+    omlx: OMLXConfig = Field(default_factory=OMLXConfig)
     typesafe: TypeSafeConfig = Field(default_factory=TypeSafeConfig)
     codex: CodexConfig = Field(default_factory=CodexConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
@@ -382,6 +390,7 @@ class CortexMuxConfig(BaseModel):
             "mlx",
             "mlx_lm",
             "mlx_vlm",
+            "omlx",
         }:
             defaults = getattr(self.providers, provider).defaults
             value = getattr(defaults, task.value, None)
@@ -455,6 +464,8 @@ def _environment_values(env: dict[str, str]) -> dict[str, Any]:
         "CORTEXMUX_MLX_LM_ENABLED": ("providers", "mlx_lm", "enabled"),
         "CORTEXMUX_MLX_VLM_BASE_URL": ("providers", "mlx_vlm", "base_url"),
         "CORTEXMUX_MLX_VLM_ENABLED": ("providers", "mlx_vlm", "enabled"),
+        "CORTEXMUX_OMLX_BASE_URL": ("providers", "omlx", "base_url"),
+        "CORTEXMUX_OMLX_ENABLED": ("providers", "omlx", "enabled"),
         "CORTEXMUX_TYPESAFE_BASE_URL": ("providers", "typesafe", "base_url"),
         "CORTEXMUX_TYPESAFE_ENABLED": ("providers", "typesafe", "enabled"),
         "CORTEXMUX_COMFYUI_BASE_URL": ("providers", "comfyui", "base_url"),

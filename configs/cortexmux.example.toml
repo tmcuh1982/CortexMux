@@ -172,3 +172,10 @@ base_url = "http://127.0.0.1:8080/v1"
 enabled = false
 base_url = "http://127.0.0.1:8081/v1"
 # MLX-VLM currently supports text calls only through this adapter.
+
+# Structured text with explicitly bound oMLX behavior profiles.
+# See docs/omlx.md for the Python configuration and bundled model IDs.
+[providers.omlx]
+enabled = false
+base_url = "http://127.0.0.1:8000/v1"
+api_key_env = "OMLX_API_KEY"
