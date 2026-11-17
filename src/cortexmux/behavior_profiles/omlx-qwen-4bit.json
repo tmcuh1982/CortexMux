@@ -1,0 +1,65 @@
+{
+  "fixtures": [
+    {
+      "accepted": true,
+      "expected_json": "{\"status\":\"ok\"}",
+      "is_synthetic": true,
+      "raw": "{\"status\":\"ok\"}"
+    },
+    {
+      "accepted": true,
+      "expected_json": "{\"status\":\"ok\"}",
+      "is_synthetic": true,
+      "raw": "```json\n{\"status\":\"ok\"}\n```"
+    },
+    {
+      "accepted": false,
+      "expected_json": null,
+      "is_synthetic": true,
+      "raw": "<think>Example</think>{\"status\":\"ok\"}"
+    }
+  ],
+  "format_version": 1,
+  "identity": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "model_revision": null,
+    "quantization": "4bit",
+    "server": "omlx",
+    "server_version": "0.7.3"
+  },
+  "profile_id": "omlx-qwen-4bit",
+  "provider": "omlx",
+  "qualifications": [
+    {
+      "checks": [
+        "syntax"
+      ],
+      "evidence": "embedded-syntax-fixtures",
+      "identity": {
+        "model": "mlx-community/Qwen3.8-27B-4bit",
+        "model_revision": null,
+        "quantization": "4bit",
+        "server": "omlx",
+        "server_version": "0.7.3"
+      },
+      "kind": "offline",
+      "passed": true,
+      "rules_fingerprint": "f62e53503926db92efd561c65695c2fbc21f8435ae378229b9794020c5086714"
+    }
+  ],
+  "revision": 1,
+  "rules": {
+    "finish_reason": "stop",
+    "json_fence": true,
+    "json_root": "object",
+    "output_cap_scope": "unknown",
+    "reasoning": "omlx",
+    "reasoning_budget": false,
+    "require_max_tokens": true,
+    "sampling": [],
+    "tasks": [
+      "structured_output"
+    ],
+    "think_prefix": false
+  }
+}

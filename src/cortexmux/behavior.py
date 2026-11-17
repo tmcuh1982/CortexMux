@@ -44,7 +44,7 @@ class BehaviorRules(ContractModel):
     json_root: Literal["object"] = "object"
     think_prefix: bool = False
     json_fence: bool = False
-    reasoning: Literal["unsupported", "mlx", "deepseek"] = "unsupported"
+    reasoning: Literal["unsupported", "mlx", "deepseek", "omlx"] = "unsupported"
     reasoning_budget: bool = False
     sampling: tuple[Literal["temperature", "top_p"], ...] = ()
     output_cap_scope: Literal["unknown", "answer", "reasoning_and_answer"] = "unknown"
@@ -98,7 +98,7 @@ class BehaviorProfile(ContractModel):
     format_version: Literal[1] = 1
     profile_id: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]+$", max_length=128)
     revision: int = Field(gt=0, strict=True)
-    provider: Literal["mlx", "mlx_lm", "mlx_vlm", "deepseek"]
+    provider: Literal["mlx", "mlx_lm", "mlx_vlm", "deepseek", "omlx"]
     identity: ModelIdentity
     rules: BehaviorRules
     fixtures: tuple[SyntaxFixture, ...] = Field(default=(), max_length=128)
@@ -172,12 +172,16 @@ class BehaviorBinding(ContractModel):
             and not matching
             and qualify_syntax(p).passed
         )
-        translation = "deepseek" if provider == "deepseek" else "mlx"
+        translation = provider if provider in {"deepseek", "omlx"} else "mlx"
         if (
             provider != p.provider
             or model != self.identity.model
             or version != self.identity.server_version
             or p.rules.reasoning not in {"unsupported", translation}
+            or (
+                provider == "omlx"
+                and (p.identity.server != "omlx" or self.identity.server != "omlx")
+            )
             or not (live or offline)
         ):
             raise InvalidRequestError(
@@ -223,11 +227,13 @@ def qualify_syntax(profile: BehaviorProfile) -> Qualification:
     )
 
 
-def bundled_profile(name: Literal["magistral", "qwen"]) -> BehaviorProfile:
+def bundled_profile(
+    name: Literal["magistral", "qwen", "omlx-qwen-4bit", "omlx-gemma-4bit"],
+) -> BehaviorProfile:
     """Load a bundled candidate manifest without activating or live-qualifying it."""
     from importlib.resources import files
 
-    if name not in {"magistral", "qwen"}:
+    if name not in {"magistral", "qwen", "omlx-qwen-4bit", "omlx-gemma-4bit"}:
         raise ValueError("Unknown bundled profile")
     return BehaviorProfile.import_json(
         files("cortexmux").joinpath("behavior_profiles", f"{name}.json").read_text()

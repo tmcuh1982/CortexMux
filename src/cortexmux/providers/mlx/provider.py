@@ -48,7 +48,7 @@ class MLXOptions(BaseModel):
 
 
 class MLXProvider(BaseProvider):
-    """Route explicit model IDs to MLX without server-side tools."""
+    """Route explicit model IDs to MLX or oMLX without server-side tools."""
 
     name = "mlx"
 
@@ -89,19 +89,32 @@ class MLXProvider(BaseProvider):
     async def get_capabilities(self, model: str | None = None) -> list[ProviderCapability]:
         """Describe the implemented non-streaming text tasks."""
         binding = self._behaviors.get(model or "")
-        tasks = frozenset(TaskType(t) for t in binding.profile.rules.tasks) if binding else _TASKS
+        if binding is not None:
+            tasks = frozenset(TaskType(t) for t in binding.profile.rules.tasks)
+        elif self.name == "omlx":
+            tasks = (
+                frozenset({TaskType.STRUCTURED_OUTPUT})
+                if model is None and self._behaviors
+                else frozenset()
+            )
+        else:
+            tasks = _TASKS
         return [
             ProviderCapability(
                 provider=self.name,
                 model=model,
                 task_types=tasks,
-                structured_output=True,
+                structured_output=TaskType.STRUCTURED_OUTPUT in tasks,
                 locally_hosted=True,
             )
         ]
 
     def supports(self, task: TaskType, model: str | None = None) -> bool:
         """Return whether this adapter handles a task."""
+        if self.name == "omlx":
+            return task == TaskType.STRUCTURED_OUTPUT and (
+                model in self._behaviors if model is not None else bool(self._behaviors)
+            )
         return task in _TASKS
 
     async def execute(self, request: CortexRequest) -> CortexResponse:
@@ -123,6 +136,10 @@ class MLXProvider(BaseProvider):
                 else None,
             )
         context = {"provider": self.name, "request_id": request.request_id}
+        if self.name == "omlx":
+            raise UnsupportedTaskError(
+                "oMLX requires a bound structured output profile.", **context
+            )
         if not isinstance(request, (TextGenerationRequest, ChatRequest, StructuredOutputRequest)):
             raise UnsupportedTaskError("MLX does not implement this task.", **context)
         if not request.model or not request.model.strip():

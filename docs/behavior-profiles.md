@@ -228,3 +228,5 @@ signatures or automatically verified external reports. No test publishes or
 activates a profile. DSPy remains a separate benchmark tool: pin program, dataset,
 server/model/profile identities and separate raw scores from Python-validated
 scores. No runtime DSPy dependency or route authority is introduced.
+
+See the [oMLX guide](omlx.md) for the separate Qwen and Gemma 4-bit profiles.

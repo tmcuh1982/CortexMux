@@ -362,6 +362,7 @@ class CortexMux:
             ("mlx", self.config.providers.mlx),
             ("mlx_lm", self.config.providers.mlx_lm),
             ("mlx_vlm", self.config.providers.mlx_vlm),
+            ("omlx", self.config.providers.omlx),
         ):
             if not mlx_settings.enabled:
                 continue
