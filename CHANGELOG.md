@@ -2,9 +2,13 @@
 
 All notable changes follow Keep a Changelog conventions.
 
-## [Unreleased]
+## [1.2.0rc3] - 2026-11-18
 
 ### Added
+
+- Introduce a generic validation harness with exact-copy and scalar quantity checks,
+  one bounded retry and explicit review. The translation adapter supports cited
+  arbitration and caller-declared references. See [Validation harness](docs/harness.md).
 
 - Add opt-in exact scalar temperature and speed conversions and comparisons,
   versioned proof, decimal or rational display, and private measurement audit

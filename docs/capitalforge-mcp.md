@@ -9,12 +9,12 @@ Enable it only in a local configuration you control:
 ```toml
 [mcp.capitalforge]
 enabled = true
-command = "/Users/lolo/Documents/DEV/CapitalForge/.venv/bin/capitalforge"
+command = "/path/to/CapitalForge/.venv/bin/capitalforge"
 arguments = [
   "mcp",
-  "/Users/lolo/Documents/DEV/CapitalForge/configs/local/capitalforge.yaml",
+  "/path/to/CapitalForge/configs/local/capitalforge.yaml",
   "--database",
-  "/Users/lolo/Documents/DEV/CapitalForge/capitalforge.db",
+  "/path/to/CapitalForge/capitalforge.db",
 ]
 timeout_seconds = 20
 shutdown_timeout_seconds = 5

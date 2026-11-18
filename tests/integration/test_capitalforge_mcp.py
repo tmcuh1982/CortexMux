@@ -32,15 +32,15 @@ async def test_real_capitalforge_stdio_read_tools(tmp_path: Path) -> None:
     """Negotiate and invoke every read-only tool against an explicitly enabled local server."""
     command = os.environ.get(
         "CORTEXMUX_CAPITALFORGE_COMMAND",
-        "/Users/lolo/Documents/DEV/CapitalForge/.venv/bin/capitalforge",
+        "/path/to/CapitalForge/.venv/bin/capitalforge",
     )
     config = os.environ.get(
         "CORTEXMUX_CAPITALFORGE_CONFIG",
-        "/Users/lolo/Documents/DEV/CapitalForge/configs/local/capitalforge.yaml",
+        "/path/to/CapitalForge/configs/local/capitalforge.yaml",
     )
     database = os.environ.get(
         "CORTEXMUX_CAPITALFORGE_DATABASE",
-        "/Users/lolo/Documents/DEV/CapitalForge/capitalforge.db",
+        "/path/to/CapitalForge/capitalforge.db",
     )
     # CapitalForge initializes SQLite's journal mode even for read operations;
     # isolate that write from the user's active portfolio database.

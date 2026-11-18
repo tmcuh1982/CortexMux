@@ -13,6 +13,9 @@ See the [release notes](docs/release-1.0.0.md) for features and validation.
 
 ## Features
 
+- Validate engine outputs with the [generic harness](docs/harness.md) and its
+  [cited translation adapter](docs/translation.md).
+
 - Deterministic provider/model routing with no ambiguous fallback.
 - Deterministic cross-provider model qualification with machine-specific
   JSON/YAML recommendation manifests.

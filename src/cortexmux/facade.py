@@ -6,11 +6,11 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from types import TracebackType
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -28,6 +28,14 @@ from cortexmux.core.registry import ProviderRegistry
 from cortexmux.core.router import Router
 from cortexmux.core.security import validate_provider_url
 from cortexmux.core.types import MessageRole, TaskType
+from cortexmux.harness import (
+    HarnessAttempt,
+    HarnessDecision,
+    HarnessResult,
+    InputT,
+    OutputT,
+    run_harness,
+)
 from cortexmux.mcp import MCPStdioClient
 from cortexmux.measurements import (
     MeasurementContext,
@@ -99,6 +107,8 @@ from cortexmux.schemas.responses import (
     VisionResponse,
 )
 from cortexmux.selection import ModelQualifier, QualificationManifest, QualificationSuite
+from cortexmux.translation import TranslationRequest, TranslationResult
+from cortexmux.translation._harness import translate as run_translation
 from cortexmux.web import WebPage, WebPageFetcher
 
 ResponseT = TypeVar("ResponseT", bound=CortexResponse)
@@ -656,6 +666,36 @@ class CortexMux:
                     return
         finally:
             self._sync(stream.aclose())
+
+    async def aharness(
+        self,
+        source: InputT,
+        generate: Callable[[InputT, HarnessAttempt[OutputT] | None], Awaitable[OutputT]],
+        validate: Callable[[InputT, OutputT], HarnessDecision | Awaitable[HarnessDecision]],
+        *,
+        max_passes: Literal[1, 2] = 2,
+    ) -> HarnessResult[OutputT]:
+        """Run an engine with a task-specific validator and optional correction."""
+        return await run_harness(source, generate, validate, max_passes=max_passes)
+
+    def harness(
+        self,
+        source: InputT,
+        generate: Callable[[InputT, HarnessAttempt[OutputT] | None], Awaitable[OutputT]],
+        validate: Callable[[InputT, OutputT], HarnessDecision | Awaitable[HarnessDecision]],
+        *,
+        max_passes: Literal[1, 2] = 2,
+    ) -> HarnessResult[OutputT]:
+        """Run the generic validation harness on this facade's shared runner."""
+        return self._sync(self.aharness(source, generate, validate, max_passes=max_passes))
+
+    async def atranslate(self, request: TranslationRequest) -> TranslationResult:
+        """Translate a cited field with two independent models and evidence-based arbitration."""
+        return await run_translation(self, request)
+
+    def translate(self, request: TranslationRequest) -> TranslationResult:
+        """Translate a cited field through this facade's shared synchronous runner."""
+        return self._sync(self.atranslate(request))
 
     async def agenerate(
         self,
