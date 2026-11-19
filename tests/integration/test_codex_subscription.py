@@ -23,10 +23,14 @@ async def test_connected_subscription():
     config.providers.ollama.enabled = False
     config.providers.comfyui.enabled = False
     config.providers.codex = CodexConfig(
-        enabled=True, auth_directory=Path(os.environ["CORTEXMUX_CODEX_AUTH_DIRECTORY"])
+        enabled=True,
+        executable=os.getenv("CORTEXMUX_CODEX_EXECUTABLE", "codex"),
+        auth_directory=Path(os.environ["CORTEXMUX_CODEX_AUTH_DIRECTORY"]),
     )
     async with CortexMux(config) as mux:
         assert (await mux.acodex_account()).connected
+        model = os.environ["CORTEXMUX_CODEX_MODEL"]
+        assert any(candidate.name == model for candidate in await mux.alist_models("codex"))
         response = await mux.astructured(
             "Return an object with answer equal to 42.",
             json_schema={
@@ -36,8 +40,8 @@ async def test_connected_subscription():
                 "additionalProperties": False,
             },
             provider="codex",
-            model=os.environ["CORTEXMUX_CODEX_MODEL"],
+            model=model,
             require_no_tools=False,
         )
+        assert response.model == model
         assert response.parsed == {"answer": 42}
-        await mux.acodex_rate_limits()

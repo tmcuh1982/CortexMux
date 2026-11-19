@@ -2,6 +2,19 @@
 
 All notable changes follow Keep a Changelog conventions.
 
+## [Unreleased]
+
+### Added
+
+- Support Codex CLI 0.170.0 alongside 0.140.0. Keep exact catalog identifiers
+  such as `gpt-6.2-sol` and reject missing model receipts, substitutions and
+  turn reroutes to a different model.
+
+### Fixed
+
+- Check the thread receipt for disabled sandbox networking and exclude Codex
+  partial-answer items from structured results.
+
 ## [1.2.0rc3] - 2026-11-18
 
 ### Added

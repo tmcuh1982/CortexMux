@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from cortexmux.core.exceptions import CortexMuxError, ProviderResponseError
+from cortexmux.core.exceptions import CortexMuxError, ModelNotFoundError, ProviderResponseError
 
 
 class CodexError(CortexMuxError):
@@ -22,8 +22,10 @@ def server_error(error: dict[str, Any]) -> CortexMuxError:
         if isinstance(error.get("data"), dict)
         else None,
     )
-    if info == "usageLimitExceeded":
+    if info in ("usageLimitExceeded", "rateLimitExceeded"):
         return CodexError("quota_reached")
+    if info == "modelNotFound":
+        return ModelNotFoundError("Codex model is unavailable.", provider="codex")
     if info == "unauthorized":
         return CodexError("connection_expired")
     if info == "sandboxError":
