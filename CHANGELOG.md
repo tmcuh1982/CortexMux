@@ -4,6 +4,8 @@ All notable changes follow Keep a Changelog conventions.
 
 ## [Unreleased]
 
+## [1.2.0rc4] - 2026-11-19
+
 ### Added
 
 - Support Codex CLI 0.170.0 alongside 0.140.0. Keep exact catalog identifiers
