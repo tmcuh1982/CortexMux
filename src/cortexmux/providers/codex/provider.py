@@ -21,7 +21,7 @@ from cortexmux.core.exceptions import (
 from cortexmux.core.json_schema import validate_json_schema, validate_json_schema_definition
 from cortexmux.core.types import TaskType
 from cortexmux.providers.base import BaseProvider
-from cortexmux.providers.codex.client import CodexClient
+from cortexmux.providers.codex.client import SUPPORTED_VERSIONS, CodexClient
 from cortexmux.providers.codex.errors import CodexError, server_error
 from cortexmux.providers.codex.schemas import (
     CodexAccount,
@@ -222,7 +222,7 @@ class CodexProvider(BaseProvider):
                     "cancellation": True,
                     "strict_no_tools": False,
                     "subscription": True,
-                    "compatible_cli": "0.140.0",
+                    "compatible_cli": ", ".join(SUPPORTED_VERSIONS),
                 },
             )
         ]
@@ -265,7 +265,7 @@ class CodexProvider(BaseProvider):
             raise InvalidRequestError("Invalid Codex request options.") from None
         if options.require_no_tools:
             raise UnsupportedTaskError(
-                "Codex 0.140.0 cannot guarantee strict no-tool execution. "
+                "Codex cannot guarantee strict no-tool execution. "
                 "Set require_no_tools=False to accept the documented sandbox limitations."
             )
         if not request.model:
@@ -399,14 +399,21 @@ class CodexProvider(BaseProvider):
                     },
                 )
                 thread_id = started["thread"]["id"]
-                actual_model = started["model"]
+                reported_model = started.get("model")
+                if not isinstance(reported_model, str) or not reported_model:
+                    raise CodexError("model_receipt_missing")
+                actual_model = reported_model
                 if actual_model != request.model:
                     raise ModelNotFoundError(
-                        "Codex substituted the requested model; generation refused."
+                        "Codex substituted the requested model at thread creation.",
+                        provider=self.name,
                     )
+                sandbox = started.get("sandbox")
                 if (
                     started.get("modelProvider") != "openai"
-                    or started.get("sandbox", {}).get("type") != "readOnly"
+                    or not isinstance(sandbox, dict)
+                    or sandbox.get("type") != "readOnly"
+                    or sandbox.get("networkAccess", False) is not False
                     or started.get("approvalPolicy") != "never"
                     or started.get("approvalsReviewer") != "user"
                     or started.get("instructionSources")
@@ -449,6 +456,19 @@ class CodexProvider(BaseProvider):
                     metadata = {"thread_id": thread_id, "turn_id": turn_id}
                     if method == "cortexmux/permissionDenied":
                         raise CodexError("permission_required")
+                    if method == "model/rerouted":
+                        source, target = data.get("fromModel"), data.get("toModel")
+                        if (
+                            not isinstance(source, str)
+                            or not source
+                            or not isinstance(target, str)
+                            or not target
+                        ):
+                            raise CodexError("model_receipt_missing")
+                        if source != actual_model or target != actual_model:
+                            raise ModelNotFoundError(
+                                "Codex rerouted the turn to a different model.", provider=self.name
+                            )
                     if method == "error":
                         raise server_error(data.get("error", {}))
                     if method in {"item/started", "item/completed"}:
@@ -473,7 +493,12 @@ class CodexProvider(BaseProvider):
                         total += len(delta)
                         if total > self.client.config.max_output_characters:
                             raise CodexError("output_limit")
-                        if phases.get(data.get("itemId")) == "commentary":
+                        phase = phases.get(data.get("itemId"))
+                        if phase == "partial_answer" and isinstance(
+                            request, StructuredOutputRequest
+                        ):
+                            continue
+                        if phase == "commentary":
                             if not isinstance(request, StructuredOutputRequest):
                                 yield StreamChunk(
                                     request_id=request.request_id,
@@ -503,8 +528,15 @@ class CodexProvider(BaseProvider):
                             raise CodexError("cancelled")
                         if turn.get("status") != "completed":
                             raise server_error(turn.get("error") or {})
+                        excluded_phases: set[str | None] = {"commentary"}
+                        if isinstance(request, StructuredOutputRequest):
+                            excluded_phases.add("partial_answer")
+                            if any(phases[key] == "final_answer" for key in texts):
+                                excluded_phases.add(None)
                         content = "\n".join(
-                            text for key, text in texts.items() if phases.get(key) != "commentary"
+                            text
+                            for key, text in texts.items()
+                            if phases[key] not in excluded_phases
                         )
                         if not content.strip():
                             raise CodexError("invalid_response")

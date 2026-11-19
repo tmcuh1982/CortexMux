@@ -20,7 +20,7 @@ from cortexmux.providers.codex.schemas import CodexConfig
 from cortexmux.version import __version__
 
 # Audited against locally generated stable schemas. New versions require review.
-SUPPORTED_VERSION = "0.140.0"
+SUPPORTED_VERSIONS = ("0.140.0", "0.170.0")
 _OVERRIDES = {
     "forced_login_method": '"chatgpt"',
     "cli_auth_credentials_store": '"file"',
@@ -42,6 +42,12 @@ _OVERRIDES = {
     "features.remote_plugin": "false",
     "features.skill_mcp_dependency_install": "false",
     "mcp_servers": "{}",
+}
+_OVERRIDES_170 = {
+    "features.browser_use": "false",
+    "features.computer_use": "false",
+    "features.image_generation": "false",
+    "features.multi_agent_v2": "false",
 }
 _SAFE_AUTH_FILES = frozenset({"config.toml", "AGENTS.md", "hooks.json"})
 _SAFE_PLUGIN_ROOT_ENTRIES = frozenset(
@@ -199,14 +205,16 @@ class CodexClient:
                     if probe.returncode is None:
                         probe.kill()
                         await probe.wait()
-                if (
-                    probe.returncode != 0
-                    or re.fullmatch(rb"codex-cli 0\.140\.0\s*", version_line) is None
-                ):
+                version_match = re.fullmatch(
+                    rb"codex-cli ([0-9]+\.[0-9]+\.[0-9]+)\s*", version_line
+                )
+                version = version_match[1].decode("ascii") if version_match else None
+                if probe.returncode != 0 or version not in SUPPORTED_VERSIONS:
                     raise CodexError("incompatible_version")
-                self.version = SUPPORTED_VERSION
+                self.version = version
                 args = [executable, "app-server", "--listen", "stdio://"]
-                for key, value in _OVERRIDES.items():
+                overrides = _OVERRIDES | _OVERRIDES_170 if version == "0.170.0" else _OVERRIDES
+                for key, value in overrides.items():
                     args.extend(["-c", f"{key}={value}"])
                 self._process = await asyncio.create_subprocess_exec(
                     *args,

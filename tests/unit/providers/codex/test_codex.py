@@ -21,12 +21,13 @@ from cortexmux.schemas.requests import StructuredOutputRequest, TextGenerationRe
 from cortexmux.schemas.responses import StreamChunk, StructuredStreamCompleted
 
 
-@pytest.fixture
-def settings(tmp_path):
+@pytest.fixture(params=["0.140.0", "0.170.0"])
+def settings(tmp_path, request):
     executable = tmp_path / "fake-codex"
     helper = Path(__file__).resolve().parents[3] / "helpers" / "codex_fake_server.py"
     executable.write_text(f"#!{sys.executable}\n" + helper.read_text())
     executable.chmod(0o700)
+    executable.with_suffix(".version").write_text(request.param)
     return CodexConfig(
         enabled=True,
         executable=str(executable),
@@ -72,6 +73,7 @@ def seed_plugin_cache(auth_directory: Path) -> None:
 async def test_interleaved_stream_and_fresh_context(settings, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "SECRET")
     monkeypatch.setenv("CODEX_ACCESS_TOKEN", "SECRET")
+    monkeypatch.setenv("CORTEXMUX_TEST_ENDPOINT", "https://example.invalid/")
     async with CodexProvider(CodexClient(settings)) as provider:
         events = [event async for event in provider.stream(request())]
         assert [e.content for e in events] == ["answer", "answer"]
@@ -122,6 +124,7 @@ async def test_structured_validation_and_stream(settings):
         events = [e async for e in provider.stream(req)]
         assert isinstance(events[-1], StructuredStreamCompleted)
         assert events[-1].parsed == {"answer": 42}
+        assert [event.content for event in events] == ['{"answer":42}', '{"answer":42}']
         assert events[-1].raw_metadata["turn_id"]
         with pytest.raises(StructuredOutputValidationError):
             await provider.execute(req.model_copy(update={"prompt": "bad-json"}))
@@ -134,6 +137,7 @@ async def test_structured_validation_and_stream(settings):
         ("interrupted", "cancelled"),
         ("permission", "permission_required"),
         ("quota", "quota_reached"),
+        ("rate-limit", "quota_reached"),
         ("malformed", "invalid_response"),
         ("crash", "process_exited"),
     ],
@@ -231,15 +235,14 @@ async def test_missing_version_and_personal_config(settings, tmp_path):
     (settings.auth_directory / "config.toml").write_text('model_provider="unexpected"')
     with pytest.raises(CodexError, match="personal_configuration_refused"):
         await CodexClient(settings).start()
-    executable = tmp_path / "old-codex"
-    executable.write_text(f'#!{sys.executable}\nprint("codex-cli 0.1.0")\n')
-    executable.chmod(0o700)
+
+
+@pytest.mark.parametrize("version", ["0.1.0", "0.171.0", "0.170.0-alpha.1"])
+async def test_unknown_version_is_rejected_before_launch(settings, version):
+    Path(settings.executable).with_suffix(".version").write_text(version)
     with pytest.raises(CodexError, match="incompatible_version"):
-        await CodexClient(
-            settings.model_copy(
-                update={"executable": str(executable), "auth_directory": tmp_path / "other"}
-            )
-        ).start()
+        await CodexClient(settings).start()
+    assert not (settings.auth_directory / "fake-requests.jsonl").exists()
 
 
 async def test_restart_keeps_dedicated_auth_cache_layout(settings):
@@ -446,7 +449,7 @@ def test_sync_stream_timeout_after_first_delta(settings):
 
 
 async def test_complete_catalog_metadata_and_hidden_model_routing(settings):
-    identifiers = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]
+    identifiers = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6.2-sol"]
     catalog = [
         {
             "model": identifier,
@@ -491,3 +494,67 @@ async def test_catalog_does_not_invent_models_or_missing_metadata(settings):
         models = await provider.list_models()
     assert [model.name for model in models] == ["test-model"]
     assert models[0].metadata == {"reasoning_efforts": "low"}
+
+
+async def test_exact_sol_structured_receipt(settings):
+    settings.auth_directory.mkdir()
+    (settings.auth_directory / "fake-model-catalog.json").write_text(
+        json.dumps([{"id": "picker-id", "model": "gpt-6.2-sol", "hidden": True}])
+    )
+    config = CortexMuxConfig()
+    config.providers.codex = settings
+    config.providers.ollama.enabled = False
+    config.providers.comfyui.enabled = False
+    async with CortexMux(config) as mux:
+        assert [model.name for model in await mux.alist_models("codex")] == ["gpt-6.2-sol"]
+        response = await mux.astructured(
+            "other-turn-rerouted",
+            provider="codex",
+            model="gpt-6.2-sol",
+            require_no_tools=False,
+            json_schema={
+                "type": "object",
+                "properties": {"answer": {"type": "integer"}},
+                "required": ["answer"],
+                "additionalProperties": False,
+            },
+        )
+        assert response.model == "gpt-6.2-sol"
+        assert response.parsed == {"answer": 42}
+    calls = {msg["method"]: msg["params"] for msg in messages(settings) if "id" in msg}
+    assert calls["thread/start"]["model"] == calls["turn/start"]["model"] == response.model
+
+
+@pytest.mark.parametrize(
+    "receipt,exception,match",
+    [
+        ("substituted", ModelNotFoundError, "substituted"),
+        ("missing", CodexError, "model_receipt_missing"),
+        ("network-enabled", CodexError, "isolation_not_supported"),
+    ],
+)
+async def test_invalid_thread_receipt_refuses_submission(settings, receipt, exception, match):
+    settings.auth_directory.mkdir()
+    (settings.auth_directory / "fake-thread-receipt").write_text(receipt)
+    async with CodexProvider(CodexClient(settings)) as provider:
+        with pytest.raises(exception, match=match):
+            await provider.execute(request())
+    assert not any(m.get("method") == "turn/start" for m in messages(settings))
+
+
+@pytest.mark.parametrize(
+    "prompt,exception,match",
+    [
+        ("rerouted", ModelNotFoundError, "rerouted"),
+        ("rerouted-missing", CodexError, "model_receipt_missing"),
+        ("model-not-found", ModelNotFoundError, "unavailable"),
+    ],
+)
+async def test_model_failure_during_turn(settings, prompt, exception, match):
+    async with CodexProvider(CodexClient(settings)) as provider:
+        with pytest.raises(exception, match=match) as caught:
+            await provider.execute(request(prompt))
+        assert "SECRET" not in str(caught.value.to_dict())
+    calls = messages(settings)
+    assert sum(m.get("method") == "turn/start" for m in calls) == 1
+    assert any(m.get("method") == "turn/interrupt" for m in calls) == prompt.startswith("rerouted")

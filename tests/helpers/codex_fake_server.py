@@ -14,13 +14,40 @@ def notify(method, **params):
     send({"method": method, "params": params})
 
 
+version = Path(__file__).with_suffix(".version").read_text().strip()
 if "--version" in sys.argv:
-    print("codex-cli 0.140.0")
+    print(f"codex-cli {version}")
     sys.exit(0)
 
 assert "OPENAI_API_KEY" not in os.environ
 assert "CODEX_ACCESS_TOKEN" not in os.environ
-assert "--listen" in sys.argv
+assert "CORTEXMUX_TEST_ENDPOINT" not in os.environ
+assert sys.argv[1:4] == ["app-server", "--listen", "stdio://"]
+overrides = {
+    value for option, value in zip(sys.argv[4::2], sys.argv[5::2], strict=True) if option == "-c"
+}
+assert {
+    'approval_policy="never"',
+    'approvals_reviewer="user"',
+    'sandbox_mode="read-only"',
+    'web_search="disabled"',
+    'cli_auth_credentials_store="file"',
+    'forced_login_method="chatgpt"',
+    'model_provider="openai"',
+    "mcp_servers={}",
+    "features.shell_tool=false",
+    "features.unified_exec=false",
+    "features.plugins=false",
+    "features.remote_plugin=false",
+    "features.multi_agent=false",
+} <= overrides
+if version == "0.170.0":
+    assert {
+        "features.browser_use=false",
+        "features.computer_use=false",
+        "features.image_generation=false",
+        "features.multi_agent_v2=false",
+    } <= overrides
 pending_login = (Path(os.environ["CODEX_HOME"]) / "fake-pending-login").exists()
 connected = True
 thread_count = 0
@@ -47,6 +74,8 @@ for line in sys.stdin:
             if connected
             else None
         }
+        if version == "0.170.0":
+            result["userId"] = "SECRET"
     elif method == "account/login/start":
         if not pending_login:
             notify("account/login/completed", loginId="login-1", success=True, error="SECRET")
@@ -81,17 +110,35 @@ for line in sys.stdin:
                 "nextCursor": str(offset + 1) if offset + 1 < len(rows) else None,
             }
     elif method == "thread/start":
+        assert params["approvalPolicy"] == "never"
+        assert params["approvalsReviewer"] == "user"
+        assert params["sandbox"] == "read-only"
+        assert params["modelProvider"] == "openai"
+        assert Path(params["cwd"]).resolve() == Path.cwd()
+        assert Path(os.environ["CODEX_HOME"]) != Path.cwd()
         thread_count += 1
         result = {
             "thread": {"id": f"thread-{thread_count}"},
             "model": params["model"],
             "modelProvider": "openai",
-            "sandbox": {"type": "readOnly"},
+            "sandbox": {"type": "readOnly", "networkAccess": False},
             "approvalPolicy": "never",
             "approvalsReviewer": "user",
             "instructionSources": [],
         }
+        receipt = Path(os.environ["CODEX_HOME"]) / "fake-thread-receipt"
+        if receipt.exists():
+            match receipt.read_text().strip():
+                case "substituted":
+                    result["model"] = "fallback"
+                case "missing":
+                    del result["model"]
+                case "network-enabled":
+                    result["sandbox"]["networkAccess"] = True
     elif method == "turn/start":
+        assert params["approvalPolicy"] == "never"
+        assert params["approvalsReviewer"] == "user"
+        assert params["sandboxPolicy"] == {"type": "readOnly", "networkAccess": False}
         turn_count += 1
         thread_id, turn_id = params["threadId"], f"turn-{turn_count}"
         prompt = params["input"][0]["text"]
@@ -127,6 +174,33 @@ for line in sys.stdin:
             turnId="other",
             item={"type": "agentMessage", "id": "wrong", "text": "WRONG"},
         )
+        if prompt in {"rerouted", "rerouted-missing", "other-turn-rerouted"}:
+            rerouted = {
+                "threadId": thread_id,
+                "turnId": "other" if prompt == "other-turn-rerouted" else turn_id,
+                "fromModel": params["model"],
+                "toModel": "fallback",
+                "reason": "highRiskCyberActivity",
+            }
+            if prompt == "rerouted-missing":
+                del rerouted["toModel"]
+            notify("model/rerouted", **rerouted)
+        if version == "0.170.0" and "outputSchema" in params:
+            partial = {
+                "type": "agentMessage",
+                "id": "partial",
+                "phase": "partial_answer",
+                "text": "Draft",
+            }
+            notify("item/started", threadId=thread_id, turnId=turn_id, item=partial)
+            notify(
+                "item/agentMessage/delta",
+                threadId=thread_id,
+                turnId=turn_id,
+                itemId="partial",
+                delta="Draft",
+            )
+            notify("item/completed", threadId=thread_id, turnId=turn_id, item=partial)
         text = '{"answer":42}' if "outputSchema" in params else "answer"
         if prompt == "bad-json":
             text = '{"answer":"wrong"}'
@@ -147,11 +221,18 @@ for line in sys.stdin:
         notify("item/completed", threadId=thread_id, turnId=turn_id, item=item)
         status = "interrupted" if prompt == "interrupted" else "completed"
         turn = {"id": turn_id, "status": status}
-        if prompt == "quota":
+        if prompt in {"quota", "rate-limit", "model-not-found"}:
             turn = {
                 "id": turn_id,
                 "status": "failed",
-                "error": {"codexErrorInfo": "usageLimitExceeded", "message": "SECRET"},
+                "error": {
+                    "codexErrorInfo": {
+                        "quota": "usageLimitExceeded",
+                        "rate-limit": "rateLimitExceeded",
+                        "model-not-found": "modelNotFound",
+                    }[prompt],
+                    "message": "SECRET",
+                },
             }
         notify("turn/completed", threadId=thread_id, turn=turn)
     elif method == "turn/interrupt":
