@@ -145,6 +145,38 @@ implicit permission escalation.
 - Responses carry `thread_id` and `turn_id` in `raw_metadata`, plus the normalized
   CortexMux request id and actual thread-selected model. No cost is invented.
 
+Codex App Server 0.140.0 publishes `thread/tokenUsage/updated` before
+`turn/completed`. CortexMux matches both `threadId` and `turnId` and aggregates
+the model response counts reported for that turn. The App Server's `tokenUsage.last`
+describes the latest model response within the turn. Its `tokenUsage.total` is
+the conversation-wide cumulative snapshot, which CortexMux uses to identify
+repeated notifications. See the [versioned usage schema](https://github.com/openai/codex/blob/rust-v0.140.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1235-L1287)
+and [Codex's model response handling](https://github.com/openai/codex/blob/rust-v0.140.0/codex-rs/core/src/session/turn.rs#L2017-L2039).
+
+The response and the terminal stream event expose the same `usage` fields.
+`prompt_tokens` includes cached input, also available as `cache_hit_tokens`.
+`completion_tokens` includes reasoning tokens. `total_tokens` uses the total
+reported for each model response. Missing counts stay `None`, explicit zeros
+stay zero, and `usage` is `None` when no counts are available.
+
+```python
+response = mux.structured(
+    "What is 6 × 7? Return the result as JSON.",
+    json_schema={
+        "type": "object",
+        "properties": {"answer": {"type": "integer"}},
+        "required": ["answer"],
+    },
+    provider="codex",
+    model="gpt-6.2-sol",
+    require_no_tools=False,
+)
+if response.usage is not None:
+    print(
+        response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens
+    )
+```
+
 Each independent request starts a fresh ephemeral thread. To retain history,
 set `persist_conversation=True`; use its returned `thread_id` as
 `conversation_id` on later requests in the **same CortexMux instance**. Model and

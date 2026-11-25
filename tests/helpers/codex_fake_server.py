@@ -14,6 +14,25 @@ def notify(method, **params):
     send({"method": method, "params": params})
 
 
+def usage_breakdown(input_tokens, output_tokens, cached=0, reasoning=0):
+    return {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "cachedInputTokens": cached,
+        "reasoningOutputTokens": reasoning,
+        "totalTokens": input_tokens + output_tokens,
+    }
+
+
+def notify_usage(thread_id, turn_id, total, last):
+    notify(
+        "thread/tokenUsage/updated",
+        threadId=thread_id,
+        turnId=turn_id,
+        tokenUsage={"total": total, "last": last, "modelContextWindow": 128000},
+    )
+
+
 if "--version" in sys.argv:
     print("codex-cli 0.140.0")
     sys.exit(0)
@@ -25,6 +44,7 @@ pending_login = (Path(os.environ["CODEX_HOME"]) / "fake-pending-login").exists()
 connected = True
 thread_count = 0
 turn_count = 0
+usage_snapshots = {}
 log = Path(os.environ["CODEX_HOME"]) / "fake-requests.jsonl"
 for line in sys.stdin:
     message = json.loads(line)
@@ -95,6 +115,8 @@ for line in sys.stdin:
         turn_count += 1
         thread_id, turn_id = params["threadId"], f"turn-{turn_count}"
         prompt = params["input"][0]["text"]
+        if prompt == json.dumps([{"role": "user", "content": "usage"}]):
+            prompt = "usage"
         if prompt == "unknown-outcome":
             continue
         result = {"turn": {"id": turn_id, "status": "inProgress"}}
@@ -145,6 +167,31 @@ for line in sys.stdin:
             send({"id": request_id, "result": result})
             continue
         notify("item/completed", threadId=thread_id, turnId=turn_id, item=item)
+        if prompt in {"usage", "usage-follow-up", "usage-zero", "usage-replayed", "usage-partial"}:
+            total, last, previous_turn = usage_snapshots.get(
+                thread_id, (usage_breakdown(0, 0), None, None)
+            )
+            if last is not None:
+                notify_usage(thread_id, previous_turn, total, last)
+                notify_usage(thread_id, turn_id, total, last)
+            if prompt == "usage-replayed":
+                estimate = {**usage_breakdown(0, 0), "totalTokens": 1120}
+                notify_usage(thread_id, turn_id, total, estimate)
+            readings = {
+                "usage": [usage_breakdown(120, 40, 20, 9)],
+                "usage-follow-up": [usage_breakdown(150, 30, 25, 7), usage_breakdown(70, 11, 5, 3)],
+                "usage-zero": [usage_breakdown(0, 0)],
+                "usage-replayed": [],
+                "usage-partial": [{"inputTokens": 0, "cachedInputTokens": 0}],
+            }
+            unrelated = usage_breakdown(999, 999)
+            notify_usage("other", turn_id, unrelated, unrelated)
+            notify_usage(thread_id, None, unrelated, unrelated)
+            for last in readings[prompt]:
+                total = {key: total[key] + value for key, value in last.items()}
+                notify_usage(thread_id, turn_id, total, last)
+                notify_usage(thread_id, turn_id, total, last)
+                usage_snapshots[thread_id] = total, last, turn_id
         status = "interrupted" if prompt == "interrupted" else "completed"
         turn = {"id": turn_id, "status": status}
         if prompt == "quota":

@@ -39,6 +39,11 @@ All notable changes follow Keep a Changelog conventions.
 - Add `response.to_markdown()` and CLI `--format markdown` (alias `md`), using
   generated text, analysis reports, or fenced structured data as appropriate.
 
+### Fixed
+
+- Populate Codex token usage for each turn in text, chat, and structured responses
+  and terminal stream events (UniversRobot TODO-851).
+
 ## [1.1.0] - 2026-11-05
 
 ### Added

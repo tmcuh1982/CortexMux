@@ -7,6 +7,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from cortexmux import CortexMux
 from cortexmux.core.config import CortexMuxConfig
@@ -17,6 +18,7 @@ from cortexmux.core.exceptions import (
     UnsupportedTaskError,
 )
 from cortexmux.providers.codex import CodexClient, CodexConfig, CodexError, CodexProvider
+from cortexmux.schemas.common import UsageMetadata
 from cortexmux.schemas.requests import StructuredOutputRequest, TextGenerationRequest
 from cortexmux.schemas.responses import StreamChunk, StructuredStreamCompleted
 
@@ -34,6 +36,16 @@ def settings(tmp_path):
         timeout_seconds=2,
         shutdown_timeout_seconds=0.2,
     )
+
+
+@pytest.fixture
+def mux(settings):
+    config = CortexMuxConfig()
+    config.providers.codex = settings
+    config.providers.ollama.enabled = False
+    config.providers.comfyui.enabled = False
+    with CortexMux(config) as instance:
+        yield instance
 
 
 def request(prompt="normal", **options):
@@ -345,9 +357,77 @@ def test_sync_facade(settings):
         assert mux.codex_rate_limits().rate_limits.primary.used_percent == 25
 
 
-def test_sync_facade_structured_stream_and_login(settings):
-    from pydantic import BaseModel
+def test_structured_usage_for_each_conversation_turn(mux):
+    class Answer(BaseModel):
+        answer: int
 
+    options = {
+        "response_model": Answer,
+        "provider": "codex",
+        "model": "test-model",
+        "require_no_tools": False,
+    }
+    first = mux.structured("usage", persist_conversation=True, **options)
+    assert first.usage == UsageMetadata(
+        prompt_tokens=120, completion_tokens=40, total_tokens=160, cache_hit_tokens=20
+    )
+    conversation_id = first.raw_metadata["thread_id"]
+    second = mux.structured("usage-follow-up", conversation_id=conversation_id, **options)
+    assert second.usage == UsageMetadata(
+        prompt_tokens=220, completion_tokens=41, total_tokens=261, cache_hit_tokens=30
+    )
+    assert second.raw_metadata["thread_id"] == conversation_id
+    assert second.raw_metadata["turn_id"] != first.raw_metadata["turn_id"]
+    assert second.request_id and second.request_id != first.request_id
+    for prompt in ("normal", "usage-replayed", "usage-zero", "usage-partial"):
+        response = mux.structured(prompt, conversation_id=conversation_id, **options)
+        assert response.parsed == Answer(answer=42)
+        assert response.content == '{"answer":42}'
+        expected = {
+            "normal": None,
+            "usage-replayed": None,
+            "usage-zero": UsageMetadata(
+                prompt_tokens=0, completion_tokens=0, total_tokens=0, cache_hit_tokens=0
+            ),
+            "usage-partial": UsageMetadata(prompt_tokens=0, cache_hit_tokens=0),
+        }
+        assert response.usage == expected[prompt]
+
+
+@pytest.mark.parametrize("prompt, reported", [("normal", False), ("usage", True)])
+def test_usage_in_text_chat_and_terminal_stream_events(mux, prompt, reported):
+    class Answer(BaseModel):
+        answer: int
+
+    options = {"provider": "codex", "model": "test-model", "require_no_tools": False}
+    expected = (
+        UsageMetadata(
+            prompt_tokens=120, completion_tokens=40, total_tokens=160, cache_hit_tokens=20
+        )
+        if reported
+        else None
+    )
+    assert mux.generate(prompt, **options).usage == expected
+    chat = mux.chat(prompt, **options)
+    assert chat.content == "answer"
+    assert chat.usage == expected
+
+    req = request(prompt)
+    delta, terminal = mux.stream(req)
+    assert delta.content == terminal.content == "answer"
+    assert not delta.done and delta.usage is None
+    assert terminal.done and terminal.usage == expected
+    assert delta.request_id == terminal.request_id == req.request_id
+
+    draft, completed = mux.stream_structured(prompt, response_model=Answer, **options)
+    assert draft.event == "chunk"
+    assert isinstance(completed, StructuredStreamCompleted)
+    assert completed.parsed == Answer(answer=42)
+    assert completed.usage == expected
+    assert draft.request_id == completed.request_id
+
+
+def test_sync_facade_structured_stream_and_login(settings):
     class Answer(BaseModel):
         answer: int
 

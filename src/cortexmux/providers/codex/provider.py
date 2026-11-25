@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
@@ -30,7 +31,7 @@ from cortexmux.providers.codex.schemas import (
     CodexRateLimits,
     CodexRequestOptions,
 )
-from cortexmux.schemas.common import HealthStatus, ModelInfo
+from cortexmux.schemas.common import HealthStatus, ModelInfo, UsageMetadata
 from cortexmux.schemas.requests import (
     ChatRequest,
     CortexRequest,
@@ -49,6 +50,67 @@ from cortexmux.schemas.responses import (
 )
 
 _TASKS = frozenset({TaskType.CHAT, TaskType.TEXT_GENERATION, TaskType.STRUCTURED_OUTPUT})
+_USAGE_FIELDS = {
+    "prompt_tokens": "inputTokens",
+    "completion_tokens": "outputTokens",
+    "total_tokens": "totalTokens",
+    "cache_hit_tokens": "cachedInputTokens",
+}
+
+
+def _usage_counts(data: object) -> dict[str, int]:
+    if not isinstance(data, dict):
+        return {}
+    return {
+        field: value
+        for field, key in _USAGE_FIELDS.items()
+        if type(value := data.get(key)) is int and value >= 0
+    }
+
+
+@dataclass
+class _Conversation:
+    model: str
+    usage_total: dict[str, int] | None = None
+
+
+class _TurnUsage:
+    def __init__(self, conversation: _Conversation) -> None:
+        self._conversation = conversation
+        self._counts: dict[str, int] | None = None
+
+    def update(self, token_usage: object) -> None:
+        if not isinstance(token_usage, dict):
+            return
+        counts = _usage_counts(token_usage.get("last"))
+        if not counts:
+            return
+        # Context compaction can publish an estimated context size in last.totalTokens.
+        if (
+            counts.get("prompt_tokens") == counts.get("completion_tokens") == 0
+            and counts.get("total_tokens", 0) > 0
+        ):
+            return
+        # The CLI can repeat the previous model response when its cumulative usage
+        # has not advanced. An explicit zero reading remains valid.
+        total = _usage_counts(token_usage.get("total"))
+        if total and total == self._conversation.usage_total and any(counts.values()):
+            return
+        if total:
+            self._conversation.usage_total = total
+        # A turn can contain several model responses. Sum each reported reading
+        # once, keeping a field unknown if any contributing reading omitted it.
+        if self._counts is None:
+            self._counts = counts
+        else:
+            self._counts = {
+                field: previous + counts[field]
+                for field, previous in self._counts.items()
+                if field in counts
+            }
+
+    def metadata(self) -> UsageMetadata | None:
+        return UsageMetadata.model_validate(self._counts) if self._counts else None
 
 
 class CodexProvider(BaseProvider):
@@ -59,7 +121,7 @@ class CodexProvider(BaseProvider):
     def __init__(self, client: CodexClient) -> None:
         self.client = client
         self._turn_lock = asyncio.Lock()
-        self._conversations: dict[str, str] = {}
+        self._conversations: dict[str, _Conversation] = {}
         self._logins: dict[str, asyncio.Task[CodexLoginResult]] = {}
 
     async def account(self) -> CodexAccount:
@@ -233,7 +295,7 @@ class CodexProvider(BaseProvider):
 
     async def execute(self, request: CortexRequest) -> CortexResponse:
         """Collect the validated terminal event into the existing response types."""
-        completed: StreamEvent | None = None
+        completed: StreamChunk | StructuredStreamCompleted | None = None
         async for event in self.stream(request):
             if isinstance(event, StructuredStreamCompleted) or (
                 isinstance(event, StreamChunk) and event.done
@@ -246,15 +308,14 @@ class CodexProvider(BaseProvider):
             "model": completed.model,
             "request_id": request.request_id,
             "content": completed.content,
+            "usage": completed.usage,
         }
         if isinstance(completed, StructuredStreamCompleted):
             return StructuredResponse(
                 **fields, parsed=completed.parsed, raw_metadata=completed.raw_metadata
             )
-        if isinstance(completed, StreamChunk):
-            response_type = ChatResponse if isinstance(request, ChatRequest) else TextResponse
-            return response_type(**fields, raw_metadata=completed.raw_metadata)
-        raise CodexError("invalid_response")
+        response_type = ChatResponse if isinstance(request, ChatRequest) else TextResponse
+        return response_type(**fields, raw_metadata=completed.raw_metadata)
 
     def _preflight(self, request: CortexRequest) -> tuple[CodexRequestOptions, str, str | None]:
         if not isinstance(request, (TextGenerationRequest, ChatRequest, StructuredOutputRequest)):
@@ -371,7 +432,8 @@ class CodexProvider(BaseProvider):
                 raise InvalidRequestError("Codex reasoning effort is unavailable for this model.")
             if options.conversation_id:
                 thread_id = options.conversation_id
-                if self._conversations.get(thread_id) != request.model:
+                conversation = self._conversations.get(thread_id)
+                if conversation is None or conversation.model != request.model:
                     raise InvalidRequestError(
                         "Conversation is unknown to this instance or uses another model."
                     )
@@ -379,7 +441,7 @@ class CodexProvider(BaseProvider):
                     raise InvalidRequestError(
                         "Set system instructions when creating the conversation."
                     )
-                actual_model = self._conversations[thread_id]
+                actual_model = conversation.model
             else:
                 started = await self.client.request(
                     "thread/start",
@@ -412,8 +474,10 @@ class CodexProvider(BaseProvider):
                     or started.get("instructionSources")
                 ):
                     raise CodexError("isolation_not_supported")
+                conversation = _Conversation(actual_model)
                 if options.persist_conversation:
-                    self._conversations[thread_id] = actual_model
+                    self._conversations[thread_id] = conversation
+            usage = _TurnUsage(conversation)
             async with self.client.events() as events:
                 params: dict[str, Any] = {
                     "threadId": thread_id,
@@ -442,6 +506,10 @@ class CodexProvider(BaseProvider):
                     if method == "cortexmux/permissionDenied" and data.get("threadId") is None:
                         raise CodexError("permission_required")
                     if data.get("threadId") != thread_id:
+                        continue
+                    if method == "thread/tokenUsage/updated":
+                        if data.get("turnId") == turn_id:
+                            usage.update(data.get("tokenUsage"))
                         continue
                     event_turn = data.get("turnId", data.get("turn", {}).get("id"))
                     if event_turn is not None and event_turn != turn_id:
@@ -525,6 +593,7 @@ class CodexProvider(BaseProvider):
                                 content=content,
                                 parsed=parsed,
                                 raw_metadata=metadata,
+                                usage=usage.metadata(),
                             )
                         else:
                             yield StreamChunk(
@@ -534,6 +603,7 @@ class CodexProvider(BaseProvider):
                                 content=content,
                                 done=True,
                                 raw_metadata={**metadata, "event": "completed"},
+                                usage=usage.metadata(),
                             )
                         return
                     if total > self.client.config.max_output_characters:
